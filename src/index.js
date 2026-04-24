@@ -4565,7 +4565,7 @@ app.post('/process-servicos-text', async (req, res) => {
   res.json({ ok: true, data: { itens, texto: text } });
 });
 
-app.get('/textos-rapidos-contrato', requirePermission(ACCESS_PERMISSIONS.TEXTOS_RAPIDOS_MANAGE), async (req, res) => {
+app.get('/textos-rapidos-contrato', requirePermission(ACCESS_PERMISSIONS.TEXTOS_RAPIDOS_VIEW), async (req, res) => {
   try {
     await ensureTextosRapidosContratoTable();
     const where = req.query.ativo !== undefined ? 'WHERE ativo = $1' : '';
