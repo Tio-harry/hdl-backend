@@ -2470,7 +2470,10 @@ app.get('/colaboradores/:colaboradorId/eventos', async (req, res) => {
   }
 });
 
-app.get('/colaboradores/:colaboradorId/financeiro', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_VIEW), async (req, res) => {
+app.get(
+  '/colaboradores/:colaboradorId/financeiro',
+  requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_COLABORADOR_VIEW),
+  async (req, res) => {
   try {
     await ensureColaboradoresTable();
     await ensureEscalaEventosTable();
@@ -2599,7 +2602,8 @@ app.get('/colaboradores/:colaboradorId/financeiro', requirePermission(ACCESS_PER
   } catch (error) {
     res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
   }
-});
+  }
+);
 
 app.post('/colaboradores', requirePermission(ACCESS_PERMISSIONS.COLABORADORES_CREATE), async (req, res) => {
   try {
