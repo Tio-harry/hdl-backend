@@ -198,6 +198,13 @@ function tryBuildEscalaCalendarInvite({
       `SUMMARY:${escapeIcsText(summary)}`,
       `LOCATION:${escapeIcsText(location)}`,
       `DESCRIPTION:${escapeIcsText(description)}`,
+      'BEGIN:VALARM',
+      'TRIGGER:-P1D',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:${escapeIcsText(
+        'Lembrete: você está escalado para um evento da Hora do Lazer amanhã.'
+      )}`,
+      'END:VALARM',
       'END:VEVENT',
       'END:VCALENDAR',
     ];
