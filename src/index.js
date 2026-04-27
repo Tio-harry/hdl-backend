@@ -342,6 +342,17 @@ function calculateContractResta(contract) {
   return moneyOrZero(contract.valor_total) - moneyOrZero(contract.entrada);
 }
 
+/** Extrai quantidade de recreadores do texto do serviço (ex.: "2 recreadores"). Retorna inteiro ou null. */
+function extractQtdRecreadoresFromServico(servicoContratado) {
+  const s = servicoContratado == null ? '' : String(servicoContratado).trim();
+  if (!s) return null;
+  const m = s.match(/(\d{1,2})\s*recreador(?:es)?/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return n;
+}
+
 function normalizeOrcamentoValue(field, value) {
   if (ORCAMENTO_JSON_FIELDS.includes(field)) {
     return normalizeJsonValue(value, field);
@@ -6111,6 +6122,11 @@ for (const row of ultimo.rows) {
     const contract = result.rows[0];
     const eventoId = crypto.randomUUID();
 
+    const localTrim = String(contract.local ?? '').trim();
+    const eventoCidade = localTrim || null;
+    const qtdExtraida = extractQtdRecreadoresFromServico(contract.servico_contratado);
+    const eventoQtdRecreadores = qtdExtraida != null ? qtdExtraida : 0;
+
     await client.query(`
       INSERT INTO eventos (
         id,
@@ -6118,6 +6134,7 @@ for (const row of ultimo.rows) {
         identificador_interno,
         contratante_nome,
         endereco_evento,
+        cidade,
         data_evento,
         dia_semana,
         hora_inicio,
@@ -6127,15 +6144,17 @@ for (const row of ultimo.rows) {
         valor_total,
         sinal,
         resta,
+        qtd_recreadores,
         status_financeiro
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
     `, [
       eventoId,
       contract.id,
       contract.identificador_interno,
       contract.nome_contratante,
       contract.local,
+      eventoCidade,
       contract.data_evento,
       contract.dia_semana,
       contract.horario_inicio,
@@ -6145,6 +6164,7 @@ for (const row of ultimo.rows) {
       moneyOrZero(contract.valor_total),
       moneyOrZero(contract.entrada),
       calculateContractResta(contract),
+      eventoQtdRecreadores,
       'Em andamento'
     ]);
 
@@ -6191,26 +6211,34 @@ app.put('/contracts/:id', async (req, res) => {
 
     const contract = result.rows[0];
 
+    const localTrim = String(contract.local ?? '').trim();
+    const cidadeParaUpdate = localTrim || null;
+    const qtdExtraidaPut = extractQtdRecreadoresFromServico(contract.servico_contratado);
+    const qtdParaUpdate = qtdExtraidaPut != null ? qtdExtraidaPut : 0;
+
     await client.query(`
       UPDATE eventos
       SET
         identificador_interno = $1,
         contratante_nome = $2,
         endereco_evento = $3,
-        data_evento = $4,
-        dia_semana = $5,
-        hora_inicio = $6,
-        hora_fim = $7,
-        servico_contratado = $8,
-        servicos_adicionais = $9,
-        valor_total = $10,
-        sinal = $11,
-        resta = $12
-      WHERE contract_id = $13
+        cidade = $4,
+        data_evento = $5,
+        dia_semana = $6,
+        hora_inicio = $7,
+        hora_fim = $8,
+        servico_contratado = $9,
+        servicos_adicionais = $10,
+        valor_total = $11,
+        sinal = $12,
+        resta = $13,
+        qtd_recreadores = $14
+      WHERE contract_id = $15
     `, [
       contract.identificador_interno,
       contract.nome_contratante,
       contract.local,
+      cidadeParaUpdate,
       contract.data_evento,
       contract.dia_semana,
       contract.horario_inicio,
@@ -6220,6 +6248,7 @@ app.put('/contracts/:id', async (req, res) => {
       moneyOrZero(contract.valor_total),
       moneyOrZero(contract.entrada),
       calculateContractResta(contract),
+      qtdParaUpdate,
       contract.id
     ]);
 
