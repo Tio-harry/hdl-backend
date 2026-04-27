@@ -211,6 +211,7 @@ const PERFIL_EQUIPE_UPDATE_FIELDS = [
   'ativo_na_equipe',
   'cpf',
   'rg',
+  'email',
   'telefone_contato',
   'telefone_recado',
   'instagram',
@@ -1804,6 +1805,7 @@ async function ensureColaboradorPerfilEquipeTable() {
       ativo_na_equipe BOOLEAN DEFAULT TRUE,
       cpf TEXT,
       rg TEXT,
+      email TEXT,
       telefone_contato TEXT,
       telefone_recado TEXT,
       instagram TEXT,
@@ -1840,6 +1842,7 @@ async function ensureColaboradorPerfilEquipeTable() {
   await pool.query(`ALTER TABLE colaborador_perfil_equipe ADD COLUMN IF NOT EXISTS ativo_na_equipe BOOLEAN DEFAULT TRUE`);
   await pool.query(`ALTER TABLE colaborador_perfil_equipe ADD COLUMN IF NOT EXISTS cpf TEXT`);
   await pool.query(`ALTER TABLE colaborador_perfil_equipe ADD COLUMN IF NOT EXISTS rg TEXT`);
+  await pool.query(`ALTER TABLE colaborador_perfil_equipe ADD COLUMN IF NOT EXISTS email TEXT`);
   await pool.query(`ALTER TABLE colaborador_perfil_equipe ADD COLUMN IF NOT EXISTS telefone_contato TEXT`);
   await pool.query(`ALTER TABLE colaborador_perfil_equipe ADD COLUMN IF NOT EXISTS telefone_recado TEXT`);
   await pool.query(`ALTER TABLE colaborador_perfil_equipe ADD COLUMN IF NOT EXISTS instagram TEXT`);
