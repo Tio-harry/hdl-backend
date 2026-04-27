@@ -20,6 +20,8 @@ const { createHomeSummaryRouter } = require('./routes/homeSummaryRoutes');
 const { createAutomaticBackupRouter } = require('./routes/automaticBackupRoutes');
 const { startAutomaticBackupScheduler } = require('./services/automaticBackupScheduler');
 const { bootstrapInitialGestor, ensureAuthSchema } = require('./services/authService');
+const { sendMail } = require('./services/emailService');
+const { buildEscalaConfirmacaoEmail } = require('./services/escalaConfirmacaoEmailTemplate');
 const pool = require('./db');
 
 const app = express();
@@ -4835,13 +4837,18 @@ app.put('/escalas-evento/:id', async (req, res) => {
     await ensureColaboradoresTable();
 
     const existingEscala = await pool.query(
-      'SELECT evento_id FROM escala_eventos WHERE id = $1',
+      `
+      SELECT id, evento_id, colaborador_id, colaborador_nome, status_aceite
+      FROM escala_eventos
+      WHERE id = $1
+      `,
       [req.params.id]
     );
     if (!existingEscala.rowCount) {
       return res.status(404).json({ ok: false, erro: 'Escala nao encontrada' });
     }
-    const eventoIdAnterior = existingEscala.rows[0].evento_id;
+    const escalaAnterior = existingEscala.rows[0];
+    const eventoIdAnterior = escalaAnterior.evento_id;
 
     if (
       Object.prototype.hasOwnProperty.call(req.body, 'colaborador_nome') ||
@@ -4913,6 +4920,94 @@ app.put('/escalas-evento/:id', async (req, res) => {
     await syncEventoPagamentoColaboradorFromEscalaSum(pool, eventoIdAtual);
     if (String(eventoIdAnterior || '') !== String(eventoIdAtual || '')) {
       await syncEventoPagamentoColaboradorFromEscalaSum(pool, eventoIdAnterior);
+    }
+
+    const statusAnterior = String(escalaAnterior?.status_aceite || '').trim();
+    const statusNovo = String(result.rows[0]?.status_aceite || '').trim();
+    const mudouParaConfirmado = statusAnterior !== 'Confirmado' && statusNovo === 'Confirmado';
+
+    if (mudouParaConfirmado) {
+      try {
+        const eventoId = String(result.rows[0]?.evento_id || '').trim();
+        const colaboradorId = String(result.rows[0]?.colaborador_id || '').trim();
+        const nomeEscala = String(result.rows[0]?.colaborador_nome || '').trim();
+
+        const [eventoResult, perfilResult, equipeResult] = await Promise.all([
+          pool.query('SELECT * FROM eventos WHERE id = $1 LIMIT 1', [eventoId]),
+          pool.query(
+            `
+            SELECT nome_completo, email
+            FROM colaborador_perfil_equipe
+            WHERE colaborador_id = $1
+            LIMIT 1
+            `,
+            [colaboradorId]
+          ),
+          pool.query(
+            `
+            SELECT colaborador_nome
+            FROM escala_eventos
+            WHERE evento_id = $1
+            ORDER BY created_at ASC, colaborador_nome ASC
+            `,
+            [eventoId]
+          ),
+        ]);
+
+        const evento = eventoResult.rows[0] || null;
+        const perfil = perfilResult.rows[0] || null;
+        const email = String(perfil?.email || '').trim();
+        const nomeCompletoPerfil = String(perfil?.nome_completo || '').trim();
+        const recreadorNome = nomeCompletoPerfil || nomeEscala || 'Recreador';
+        const nomesEquipe = equipeResult.rows
+          .map((row) => String(row?.colaborador_nome || '').trim())
+          .filter(Boolean);
+
+        if (!email) {
+          console.info(
+            `[escala-email] envio ignorado por ausência de e-mail (escala_id=${req.params.id}, colaborador_id=${colaboradorId})`
+          );
+        } else if (!evento) {
+          console.error(
+            `[escala-email] envio não realizado: evento não encontrado (escala_id=${req.params.id}, evento_id=${eventoId})`
+          );
+        } else {
+          const template = buildEscalaConfirmacaoEmail({
+            evento,
+            recreadorNome,
+            nomesEquipe,
+          });
+          const mailResult = await sendMail({
+            to: email,
+            subject: template.subject,
+            text: template.text,
+          });
+
+          if (mailResult.ok && !mailResult.skipped) {
+            console.info(
+              `[escala-email] e-mail enviado com sucesso (escala_id=${req.params.id}, para=${email}, message_id=${mailResult.messageId || '-'})`
+            );
+          } else if (mailResult.skipped && mailResult.reason === 'email_disabled') {
+            console.info(
+              `[escala-email] envio ignorado por EMAIL_ENABLED false (escala_id=${req.params.id}, para=${email})`
+            );
+          } else if (!mailResult.ok && mailResult.reason === 'smtp_error') {
+            console.error(
+              `[escala-email] erro SMTP ao enviar confirmação (escala_id=${req.params.id}, para=${email})`,
+              mailResult.error
+            );
+          } else {
+            console.error(
+              `[escala-email] envio não concluído (escala_id=${req.params.id}, para=${email}, reason=${mailResult.reason || 'unknown'})`
+            );
+          }
+        }
+      } catch (emailError) {
+        console.error(
+          `[escala-email] erro inesperado no fluxo de confirmação por e-mail (escala_id=${req.params.id})`,
+          emailError
+        );
+      }
     }
 
     res.json({ ok: true, dados: result.rows[0] });
