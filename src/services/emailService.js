@@ -38,7 +38,7 @@ function getTransporter() {
   return transporter;
 }
 
-async function sendMail({ to, subject, text, html }) {
+async function sendMail({ to, subject, text, html, attachments }) {
   if (!isEmailEnabled()) {
     return { ok: true, skipped: true, reason: 'email_disabled' };
   }
@@ -55,13 +55,17 @@ async function sendMail({ to, subject, text, html }) {
 
   try {
     const client = getTransporter();
-    const info = await client.sendMail({
+    const mailOptions = {
       from,
       to: safeTo,
       subject: String(subject || '').trim(),
       text: text != null ? String(text) : '',
       ...(html != null ? { html: String(html) } : {}),
-    });
+    };
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      mailOptions.attachments = attachments;
+    }
+    const info = await client.sendMail(mailOptions);
     return { ok: true, skipped: false, messageId: info?.messageId || null };
   } catch (error) {
     return {

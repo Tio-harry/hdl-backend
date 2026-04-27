@@ -22,6 +22,7 @@ const { startAutomaticBackupScheduler } = require('./services/automaticBackupSch
 const { bootstrapInitialGestor, ensureAuthSchema } = require('./services/authService');
 const { sendMail } = require('./services/emailService');
 const { buildEscalaConfirmacaoEmail } = require('./services/escalaConfirmacaoEmailTemplate');
+const { tryBuildEscalaCalendarInvite } = require('./services/calendarInviteService');
 const pool = require('./db');
 
 const app = express();
@@ -4977,10 +4978,39 @@ app.put('/escalas-evento/:id', async (req, res) => {
             recreadorNome,
             nomesEquipe,
           });
+
+          let attachments;
+          try {
+            const icsResult = tryBuildEscalaCalendarInvite({
+              evento,
+              recreadorNome,
+              recreadorEmail: email,
+              nomesEquipe,
+              escalaId: req.params.id,
+              colaboradorId,
+            });
+            if (icsResult.ok) {
+              attachments = [icsResult.attachment];
+              console.info(
+                `[escala-ics] convite anexado (escala_id=${req.params.id}, evento_id=${eventoId}, colaborador_id=${colaboradorId})`
+              );
+            } else {
+              console.info(
+                `[escala-ics] convite omitido: motivo=${icsResult.reason} (escala_id=${req.params.id}, evento_id=${eventoId})`
+              );
+            }
+          } catch (icsErr) {
+            console.error(
+              `[escala-ics] convite omitido: motivo=erro_inesperado (escala_id=${req.params.id}, evento_id=${eventoId})`,
+              icsErr
+            );
+          }
+
           const mailResult = await sendMail({
             to: email,
             subject: template.subject,
             text: template.text,
+            ...(attachments?.length ? { attachments } : {}),
           });
 
           if (mailResult.ok && !mailResult.skipped) {

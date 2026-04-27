@@ -56,4 +56,5 @@ function buildEscalaConfirmacaoEmail({ evento, recreadorNome, nomesEquipe }) {
 
 module.exports = {
   buildEscalaConfirmacaoEmail,
+  buildModeloEventoTexto,
 };
