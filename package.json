@@ -4,6 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "migrate:portal-talentos": "node scripts/runPortalTalentosMigrations.js",
+    "migrate:portal-talentos:apply": "node scripts/runPortalTalentosMigrations.js --apply",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

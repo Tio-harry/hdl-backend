@@ -6,6 +6,10 @@ const cors = require('cors');
 const crypto = require('crypto');
 require('dotenv').config();
 const { parseContractText } = require("./services/contractTextParser");
+const {
+  AIContractOrganizerError,
+  organizeContractTextWithAI,
+} = require('./services/aiContractOrganizerService');
 const { parseTextosRapidosContratoImport } = require("./services/textosRapidosContratoImportParser");
 const {
   ACCESS_PERMISSIONS,
@@ -18,6 +22,7 @@ const { createAuthRouter } = require('./routes/authRoutes');
 const { createAdminUsersRouter } = require('./routes/adminUsersRoutes');
 const { createHomeSummaryRouter } = require('./routes/homeSummaryRoutes');
 const { createAutomaticBackupRouter } = require('./routes/automaticBackupRoutes');
+const { createPortalTalentosRouter } = require('./modules/portalTalentos');
 const { startAutomaticBackupScheduler } = require('./services/automaticBackupScheduler');
 const { bootstrapInitialGestor, ensureAuthSchema } = require('./services/authService');
 const { sendMail } = require('./services/emailService');
@@ -36,6 +41,7 @@ app.use(createAuthRouter());
 app.use(createAdminUsersRouter());
 app.use(createHomeSummaryRouter());
 app.use(createAutomaticBackupRouter());
+app.use('/api/portal-talentos', createPortalTalentosRouter());
 
 const CONTRACT_INSERT_FIELDS = [
   'nome_contratante',
@@ -6307,6 +6313,37 @@ app.delete('/contracts/:id', requirePermission(ACCESS_PERMISSIONS.CONTRACTS_DELE
 });
 
 const PORT = process.env.PORT || 3001;
+
+app.post('/ai/organizar-contrato', async (req, res) => {
+  try {
+    const textoBruto = typeof req.body?.texto_bruto === 'string' ? req.body.texto_bruto : '';
+    const contexto = req.body?.contexto && typeof req.body.contexto === 'object'
+      ? req.body.contexto
+      : {};
+
+    if (!textoBruto.trim()) {
+      return res.status(400).json({
+        ok: false,
+        erro: 'Campo texto_bruto é obrigatório.',
+      });
+    }
+
+    const result = await organizeContractTextWithAI({
+      texto_bruto: textoBruto,
+      contexto,
+    });
+
+    return res.json(result);
+  } catch (error) {
+    const statusCode = error instanceof AIContractOrganizerError
+      ? error.statusCode
+      : 500;
+    return res.status(statusCode).json({
+      ok: false,
+      erro: error.message || 'Erro ao organizar contrato com IA.',
+    });
+  }
+});
 
 app.post("/process-contract-pdf", upload.single("file"), async (req, res) => {
   try {
