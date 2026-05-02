@@ -32,6 +32,7 @@ const STRING_KEYS = [
   'tema',
   'espaco',
   'servico_contratado',
+  'extras',
   'informacoes',
 ];
 
@@ -61,6 +62,25 @@ const WEEK_DAYS_PT = [
   'sábado',
 ];
 
+/** Cidades reconhecidas no local → cabeçalho e cidade de emissão (padrão: Recife). */
+const REGIAO_POR_CIDADE = [
+  { test: (t) => /\bFortaleza\b/i.test(t), empresa_atendimento: 'Atendimento Fortaleza - CE', cidade_emissao: 'Fortaleza - CE' },
+  { test: (t) => /\bNatal\b/i.test(t), empresa_atendimento: 'Atendimento Natal - RN', cidade_emissao: 'Natal - RN' },
+  { test: (t) => /\bJoão\s+Pessoa\b/i.test(t) || /\bJoao\s+Pessoa\b/i.test(t), empresa_atendimento: 'Atendimento João Pessoa - PB', cidade_emissao: 'João Pessoa - PB' },
+  { test: (t) => /\bCaruaru\b/i.test(t), empresa_atendimento: 'Atendimento Caruaru - PE', cidade_emissao: 'Caruaru - PE' },
+];
+
+const DEFAULT_EMPRESA_ATENDIMENTO = 'Atendimento Recife - PE';
+const DEFAULT_CIDADE_EMISSAO = 'Recife - PE';
+
+/** Limites pós-processamento (evita contaminação / texto bruto na resposta). */
+const MAX_SERVICO_CONTRATADO_LEN = 180;
+const MAX_ITEM_DESCRICAO_LEN = 100;
+
+/** Linha típica de lista de crianças: "Nome - 8" ou "Maria – 10 anos". */
+const RX_LINE_NOME_IDADE =
+  /^\s*[\p{L}][\p{L}\s.'’-]{0,120}?\s*[-–—]\s*\d{1,2}(\s*anos?)?\s*$/iu;
+
 class AIContractOrganizerError extends Error {
   constructor(message, statusCode = 400) {
     super(message);
@@ -84,6 +104,7 @@ function buildEmptyDados() {
     tema: '',
     espaco: '',
     servico_contratado: '',
+    extras: '',
     valor_total: null,
     entrada: null,
     saldo: null,
@@ -326,6 +347,550 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function normalizeTextForExtrasMatch(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/ç/g, 'c')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+}
+
+const EXTRA_NEEDLES_NORMALIZED = [
+  'torta na cara',
+  'caca ao tesouro',
+  'quebra panela',
+  'escultura em baloes',
+  'kit futebol',
+  'som e microfone',
+  'hora extra',
+  'pintura em tela',
+  'pintura em gesso',
+  'massinha de modelar',
+  'oficina de slime',
+  'oficina de culinaria',
+  'oficina de bijuterias',
+  'oficina bob goods',
+].map((s) => normalizeTextForExtrasMatch(s));
+
+function isExtraDescription(desc) {
+  const key = normalizeTextForExtrasMatch(desc);
+  if (!key.trim()) return false;
+  if (key.includes('oficina')) return true;
+  return EXTRA_NEEDLES_NORMALIZED.some((needle) => key.includes(needle));
+}
+
+/** Serviço principal (linha com valor) — não é extra. */
+function isLikelyPrincipalLine(desc) {
+  const key = normalizeTextForExtrasMatch(desc);
+  if (!key.trim() || isExtraDescription(desc)) return false;
+  if (/\b\d+\s+recreador/.test(key)) return true;
+  if (key.includes('recreacao')) return true;
+  if (key.includes('pool party')) return true;
+  if (key.includes('camarim kids')) return true;
+  if (key.includes('papai noel')) return true;
+  if (key.includes('promotor')) return true;
+  if (key.includes('servico com ator')) return true;
+  if (key.includes('personagem')) return true;
+  return false;
+}
+
+function dedupeEspacoValue(value) {
+  let t = cleanString(value);
+  if (!t) return '';
+  t = t.replace(/^espa[çc]o\s*:\s*/i, '').trim();
+  t = t.replace(/^espa[çc]o\s+espa[çc]o\b/i, 'espaço');
+  t = t.replace(/^espa[çc]o\s+/i, '');
+  return t.trim();
+}
+
+function extractExplicitQtdCriancas(text) {
+  const raw = String(text || '');
+  const torno = raw.match(/em\s+torno\s+de\s+(\d+)\s*crian[çc]as?\b/i);
+  if (torno) {
+    const fullPhrase = raw.match(/em\s+torno\s+de\s+\d+\s*crian[çc]as?/i);
+    return fullPhrase ? fullPhrase[0].trim() : String(Number(torno[1]));
+  }
+  const m = raw.match(/(\d+)\s*crian[çc]as?\b/i);
+  return m ? String(Number(m[1])) : '';
+}
+
+function extractFaixaEtariaExplicita(text) {
+  const m = String(text || '').match(/(\d+)\s*a\s*(\d+)\s*anos\b/i);
+  if (!m) return '';
+  return `${Number(m[1])} a ${Number(m[2])} anos`;
+}
+
+function stripFromDadosMarker(text) {
+  const s = String(text || '');
+  const idx = s.search(/\bDados:\s*/i);
+  if (idx >= 0) return s.slice(0, idx).trim();
+  return s.trim();
+}
+
+/** Remove linhas tipo lista/instrução (marcadores no início). */
+function stripBulletAndInstructionLines(text) {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => {
+      const t = line.trim();
+      if (!t) return false;
+      if (/^\s*(?:[-*•]|\d+\))\s+/.test(line)) return false;
+      return true;
+    })
+    .join('\n')
+    .trim();
+}
+
+function stripNameAgeLines(text) {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !RX_LINE_NOME_IDADE.test(line.trim()))
+    .join('\n')
+    .trim();
+}
+
+function collapseWhitespaceSingleLine(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Remove caracteres invisíveis, bullets, crases e normaliza espaços. */
+function stripInvalidCharsAndMarks(text) {
+  let s = String(text || '')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/•/g, '')
+    .replace(/`/g, '')
+    .replace(/\r?\n+/g, ' ');
+  return collapseWhitespaceSingleLine(s);
+}
+
+/**
+ * Remove prefixos de formulário / pergunta no início (repete até estabilizar).
+ */
+function stripLeadingInstructionPrefixes(text) {
+  const explicit = [
+    /^[\s•`'"]*Qual\s+o\s+servi[çc]o\s+contratado\s*\??\s*/i,
+    /^[\s•`'"]*Servi[çc]o\s*(contratado\s*)?:\s*/i,
+    /^[\s•`'"]*Dados\s*:\s*/i,
+    /^[\s•`'"]*Nome\s*(completo\s*)?(do\s*contratante\s*)?:\s*/i,
+    /^[\s•`'"]*Local\s*(da\s*festa\s*)?:\s*/i,
+    /^[\s•`'"]*Data\s*(da\s*festa\s*)?:\s*/i,
+    /^[\s•`'"]*Hor[aá]rio\s*[^:]+:\s*/i,
+  ];
+
+  let s = collapseWhitespaceSingleLine(text);
+  for (let round = 0; round < 14; round++) {
+    let next = s;
+    for (const rx of explicit) {
+      next = next.replace(rx, '');
+    }
+    next = next.replace(/^[\s•`'"]{1,12}(?:[^\n?]{1,100}\?\s*)/, '');
+    next = collapseWhitespaceSingleLine(next);
+    if (next === s) break;
+    s = next;
+  }
+  return s.trim();
+}
+
+/** Ajuste pontual: "01 recreador" → "01 Recreador" após limpeza. */
+function capitalizeServicoPrincipalWord(s) {
+  const t = cleanString(s);
+  if (!t) return '';
+  return t.replace(/^(\d+\s+)recreador\b/i, (_, pre) => `${pre}Recreador`);
+}
+
+/** Normaliza duplicidade óbvia em informacoes (ex.: "crianças crianças"). */
+function normalizeInformacoesDuplicates(raw) {
+  let s = cleanString(raw);
+  if (!s) return '';
+  s = collapseWhitespaceSingleLine(s.replace(/\s+/g, ' '));
+  let t = s.replace(/\bcriancas\b/gi, 'crianças').replace(/\bcrianca\b/gi, 'criança');
+  const rxPlural = /\b(crianças)\b(?:\s*[,.;:!?]+\s*)?\s*\1\b/giu;
+  const rxSing = /\b(criança)\b(?:\s*[,.;:!?]+\s*)?\s*\1\b/giu;
+  for (let i = 0; i < 8; i++) {
+    const next = t.replace(rxPlural, '$1').replace(rxSing, '$1');
+    if (next === t) break;
+    t = next;
+  }
+  return collapseWhitespaceSingleLine(t);
+}
+
+/**
+ * Remove contaminação comum de texto bruto em descrições de serviço/extra.
+ */
+function sanitizeContractFieldText(raw) {
+  let s = cleanString(raw);
+  if (!s) return '';
+  s = stripInvalidCharsAndMarks(s);
+  s = stripLeadingInstructionPrefixes(s);
+  s = stripFromDadosMarker(s);
+  s = stripBulletAndInstructionLines(s);
+  s = stripNameAgeLines(s);
+  s = s.replace(/\n+/g, ' ');
+  s = collapseWhitespaceSingleLine(s);
+  s = s.replace(/\s+Dados:\s+.*$/i, '').trim();
+  s = stripInvalidCharsAndMarks(s);
+  s = stripLeadingInstructionPrefixes(s);
+  s = capitalizeServicoPrincipalWord(s);
+  return collapseWhitespaceSingleLine(s);
+}
+
+function truncateRelevant(text, maxLen) {
+  const s = cleanString(text);
+  if (!s || s.length <= maxLen) return s;
+  const slice = s.slice(0, maxLen);
+  const lastSpace = slice.lastIndexOf(' ');
+  if (lastSpace > Math.floor(maxLen * 0.55)) return slice.slice(0, lastSpace).trim();
+  return slice.trim();
+}
+
+/** Trecho do texto bruto usado só para detectar linha "serviço R$ + extra R$" (sem blocos colados). */
+function preparaTextoBrutoParaParseServico(textoBruto) {
+  let t = cleanString(textoBruto);
+  if (!t) return '';
+  t = stripFromDadosMarker(t);
+  t = stripBulletAndInstructionLines(t);
+  t = stripNameAgeLines(t);
+  return collapseWhitespaceSingleLine(t.replace(/\n+/g, ' '));
+}
+
+function deepSanitizeServicoEItens(dados, itensDiscriminados, alertas) {
+  if (Object.prototype.hasOwnProperty.call(dados, 'extras')) {
+    dados.extras = sanitizeContractFieldText(dados.extras || '');
+  }
+
+  const beforeServico = dados.servico_contratado;
+  dados.servico_contratado = sanitizeContractFieldText(dados.servico_contratado);
+
+  let removedItem = false;
+  const cleaned = [];
+  for (const item of itensDiscriminados) {
+    const d = sanitizeContractFieldText(item.descricao);
+    if (!d) {
+      removedItem = true;
+      continue;
+    }
+    cleaned.push({ ...item, descricao: d });
+  }
+  itensDiscriminados.length = 0;
+  itensDiscriminados.push(...cleaned);
+
+  const dirtied =
+    (beforeServico && sanitizeContractFieldText(beforeServico) !== beforeServico) ||
+    /\bDados:\s*/i.test(String(beforeServico || '')) ||
+    removedItem;
+
+  if (dirtied) {
+    alertas.push(
+      'Descrições de serviço e itens foram higienizadas (removidos bloco "Dados:", listas de nomes ou instruções).'
+    );
+  }
+}
+
+function applyLengthLimitsServicoEItens(dados, itensDiscriminados) {
+  dados.servico_contratado = truncateRelevant(dados.servico_contratado, MAX_SERVICO_CONTRATADO_LEN);
+  for (let i = 0; i < itensDiscriminados.length; i++) {
+    const it = itensDiscriminados[i];
+    itensDiscriminados[i] = {
+      ...it,
+      descricao: truncateRelevant(it.descricao, MAX_ITEM_DESCRICAO_LEN),
+    };
+  }
+}
+
+function inferRegiaoAtendimento(localText, textoBruto) {
+  const combined = `${cleanString(localText)}\n${cleanString(textoBruto)}`;
+  if (!combined.trim()) {
+    return {
+      empresa_atendimento: DEFAULT_EMPRESA_ATENDIMENTO,
+      cidade_emissao: DEFAULT_CIDADE_EMISSAO,
+    };
+  }
+  for (const regiao of REGIAO_POR_CIDADE) {
+    if (regiao.test(combined)) {
+      return {
+        empresa_atendimento: regiao.empresa_atendimento,
+        cidade_emissao: regiao.cidade_emissao,
+      };
+    }
+  }
+  return {
+    empresa_atendimento: DEFAULT_EMPRESA_ATENDIMENTO,
+    cidade_emissao: DEFAULT_CIDADE_EMISSAO,
+  };
+}
+
+function formatExtraDescricao(raw) {
+  const t = cleanString(raw);
+  if (!t) return '';
+  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+}
+
+/** Linha inteira no formato descrição + R$ valor (determinístico). */
+const RX_LINHA_COM_PRECO = /^(.+?)\s+R\$\s*([\d.,]+)\s*$/i;
+
+function parseLinhasComValorPreco(textoBruto) {
+  const lines = String(textoBruto || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const out = [];
+  for (const line of lines) {
+    const m = line.match(RX_LINHA_COM_PRECO);
+    if (!m) continue;
+    const descricao = m[1].trim();
+    const valor = normalizeMoneyOrNull(m[2]);
+    if (!descricao || valor === null) continue;
+    out.push({ descricao, valor });
+  }
+  return out;
+}
+
+/**
+ * Monta serviço, extras, itens e valores apenas com linhas "… R$ X" do texto bruto (prioridade máxima).
+ */
+function extractDeterministicContractParts(textoBruto) {
+  const parsedLines = parseLinhasComValorPreco(textoBruto);
+  if (!parsedLines.length) return null;
+
+  let principalIdx = parsedLines.findIndex((p) => isLikelyPrincipalLine(p.descricao));
+  if (principalIdx < 0) {
+    principalIdx = parsedLines.findIndex((p) => !isExtraDescription(p.descricao));
+  }
+  if (principalIdx < 0) principalIdx = 0;
+
+  const principal = parsedLines[principalIdx];
+  const servico_contratado = principal.descricao.trim();
+
+  const extrasParts = [];
+  for (let i = 0; i < parsedLines.length; i++) {
+    if (i === principalIdx) continue;
+    if (isExtraDescription(parsedLines[i].descricao)) {
+      extrasParts.push(formatExtraDescricao(parsedLines[i].descricao));
+    }
+  }
+
+  const orderedItens = [
+    parsedLines[principalIdx],
+    ...parsedLines.filter((_, i) => i !== principalIdx),
+  ].map((p) => ({
+    descricao: p.descricao.trim(),
+    valor: p.valor,
+  }));
+
+  const sum = parsedLines.reduce((acc, p) => acc + p.valor, 0);
+  const valor_total = Number(sum.toFixed(2));
+  const half = Number((valor_total / 2).toFixed(2));
+
+  return {
+    servico_contratado,
+    extras: extrasParts.join(', '),
+    itens_discriminados: orderedItens,
+    valor_total,
+    entrada: half,
+    saldo: half,
+    principalFallback: servico_contratado,
+  };
+}
+
+function isContaminatedContractDescription(desc) {
+  const s = cleanString(desc);
+  if (!s) return true;
+  if (/\bDados:\s*/i.test(s)) return true;
+  if (/nome\s+completo\s+do\s+contratante/i.test(s)) return true;
+  if (/local\s+da\s+festa/i.test(s)) return true;
+  if (/data\s+da\s+festa/i.test(s)) return true;
+  if (/hor[aá]rio\s+que\s+inicia/i.test(s)) return true;
+  if (/\bobserva[çc][aã]o\b/i.test(s) && s.length > 35) return true;
+  if (/^\s*obs\.?\s*:?\s*/i.test(s)) return true;
+  if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(s)) return true;
+  if (/\bCEP\b|\bRua\b|\bAv\.?\b|\bAvenida\b/i.test(s) && s.length > 35) return true;
+  if (RX_LINE_NOME_IDADE.test(s)) return true;
+  const lines = s.split(/\r?\n/).filter(Boolean);
+  if (lines.length >= 2 && lines.filter((ln) => RX_LINE_NOME_IDADE.test(ln.trim())).length >= 2) return true;
+  return false;
+}
+
+function applyContaminationFinalGuard(dados, itensDiscriminados, ctx, alertas) {
+  const { fromDeterministicExtract, principalFallback } = ctx;
+
+  let serv = cleanString(dados.servico_contratado);
+  const suspiciousLong = serv.length > MAX_SERVICO_CONTRATADO_LEN;
+  const bad = isContaminatedContractDescription(serv);
+
+  if (bad || suspiciousLong) {
+    const fb = cleanString(principalFallback);
+    if (fb && !isContaminatedContractDescription(fb)) {
+      dados.servico_contratado = truncateRelevant(fb, MAX_SERVICO_CONTRATADO_LEN);
+      alertas.push(
+        'servico_contratado ajustado com base na linha de serviço com preço (texto suspeito, contaminado ou longo demais).'
+      );
+    } else {
+      dados.servico_contratado = truncateRelevant(sanitizeContractFieldText(serv), MAX_SERVICO_CONTRATADO_LEN);
+    }
+  } else {
+    dados.servico_contratado = truncateRelevant(serv, MAX_SERVICO_CONTRATADO_LEN);
+  }
+
+  const kept = [];
+  for (const item of itensDiscriminados) {
+    const d = cleanString(item.descricao);
+    if (!d) continue;
+    if (isContaminatedContractDescription(d)) continue;
+    if (d.length > MAX_ITEM_DESCRICAO_LEN && !fromDeterministicExtract) continue;
+    kept.push({
+      ...item,
+      descricao: truncateRelevant(d, MAX_ITEM_DESCRICAO_LEN),
+    });
+  }
+  itensDiscriminados.length = 0;
+  itensDiscriminados.push(...kept);
+
+  const ex = cleanString(dados.extras);
+  if (ex && isContaminatedContractDescription(ex)) {
+    dados.extras = '';
+  }
+}
+
+const RX_PRECO_FIM = /\s+R\$\s*([\d.,]+)\s*$/i;
+
+/**
+ * Interpreta linha tipo "serviço completo R$ 300 + extra R$ 45".
+ * Retorna null se não houver padrão utilizável.
+ */
+function parseServicoEExtrasDoTextoBruto(textoBruto) {
+  const full = cleanString(textoBruto);
+  if (!full || !full.includes('+')) return null;
+
+  const partes = full
+    .split(/\s*\+\s*/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (partes.length < 2) return null;
+
+  const segmentos = [];
+  for (const parte of partes) {
+    const m = parte.match(RX_PRECO_FIM);
+    const valor = m ? normalizeMoneyOrNull(m[1]) : null;
+    const descricao = (m ? parte.slice(0, m.index) : parte).trim();
+    if (!descricao) continue;
+    segmentos.push({ descricao, valor });
+  }
+  if (segmentos.length < 2) return null;
+
+  const principal = segmentos[0];
+  if (isExtraDescription(principal.descricao)) return null;
+
+  const itens = [
+    { descricao: principal.descricao, valor: principal.valor },
+    ...segmentos.slice(1).map((s) => ({
+      descricao: formatExtraDescricao(s.descricao),
+      valor: s.valor,
+    })),
+  ];
+
+  return {
+    servico_contratado: principal.descricao,
+    itens_discriminados: itens,
+  };
+}
+
+/**
+ * Alinha serviço principal (campo dados) com o melhor texto disponível.
+ * O 1º item discriminado fica como rótulo curto (≤80 caracteres); o frontend pode unir itens.
+ */
+function syncPrincipalServicoEItens(dados, itens) {
+  const principalIdx = itens.findIndex((i) => i.descricao && !isExtraDescription(i.descricao));
+  const idx = principalIdx >= 0 ? principalIdx : 0;
+
+  const servico = cleanString(dados.servico_contratado);
+  const itemPrincipal = itens[idx]?.descricao ? cleanString(itens[idx].descricao) : '';
+
+  const escolhido =
+    servico.length >= itemPrincipal.length ? servico : itemPrincipal || servico;
+  if (!escolhido) return;
+
+  dados.servico_contratado = escolhido;
+
+  const rotuloPrincipal = truncateRelevant(escolhido, MAX_ITEM_DESCRICAO_LEN);
+
+  if (!itens.length) {
+    itens.push({ descricao: rotuloPrincipal, valor: null });
+    return;
+  }
+  itens[idx] = { ...itens[idx], descricao: rotuloPrincipal };
+}
+
+function applyPostProcessingHeuristics(textoBruto, dados, itensDiscriminados, alertas) {
+  const texto = cleanString(textoBruto);
+  let deterministicFinanceApplied = false;
+  let fromDeterministicExtract = false;
+  let principalFallback = '';
+
+  const qtdExplicita = extractExplicitQtdCriancas(texto);
+  if (qtdExplicita) {
+    dados.qtd_criancas = qtdExplicita;
+    alertas.push('Quantidade de crianças definida pelo texto explícito no contrato (não por contagem de nomes).');
+  }
+
+  const faixaEx = extractFaixaEtariaExplicita(texto);
+  if (faixaEx && !cleanString(dados.faixa_etaria)) {
+    dados.faixa_etaria = faixaEx;
+  }
+
+  if (dados.espaco) {
+    dados.espaco = dedupeEspacoValue(dados.espaco);
+  }
+
+  const regiao = inferRegiaoAtendimento(dados.local, texto);
+  dados.empresa_atendimento = regiao.empresa_atendimento;
+  dados.cidade_emissao = regiao.cidade_emissao;
+  if (regiao.empresa_atendimento !== DEFAULT_EMPRESA_ATENDIMENTO) {
+    alertas.push(`Região de atendimento ajustada automaticamente conforme local: ${regiao.cidade_emissao}.`);
+  }
+
+  const det = extractDeterministicContractParts(texto);
+  if (det) {
+    dados.servico_contratado = det.servico_contratado;
+    dados.extras = det.extras;
+    itensDiscriminados.length = 0;
+    itensDiscriminados.push(...det.itens_discriminados);
+    dados.valor_total = det.valor_total;
+    dados.entrada = det.entrada;
+    dados.saldo = det.saldo;
+    deterministicFinanceApplied = true;
+    fromDeterministicExtract = true;
+    principalFallback = det.principalFallback;
+    alertas.push('Serviços e valores definidos por extração determinística das linhas com R$ no texto bruto.');
+  } else {
+    const textoParaParse = preparaTextoBrutoParaParseServico(texto);
+    const parsedLinha = parseServicoEExtrasDoTextoBruto(textoParaParse);
+    if (parsedLinha && parsedLinha.itens_discriminados.length) {
+      dados.servico_contratado = parsedLinha.servico_contratado;
+      itensDiscriminados.length = 0;
+      itensDiscriminados.push(...parsedLinha.itens_discriminados);
+      principalFallback = parsedLinha.servico_contratado;
+      alertas.push('Serviço principal e extras alinhados ao texto (trecho com "+" e preços).');
+    }
+  }
+
+  deepSanitizeServicoEItens(dados, itensDiscriminados, alertas);
+  applyContaminationFinalGuard(
+    dados,
+    itensDiscriminados,
+    { fromDeterministicExtract, principalFallback },
+    alertas
+  );
+  syncPrincipalServicoEItens(dados, itensDiscriminados);
+  applyLengthLimitsServicoEItens(dados, itensDiscriminados);
+
+  dados.informacoes = normalizeInformacoesDuplicates(dados.informacoes);
+
+  return deterministicFinanceApplied;
+}
+
 function extractJsonStringFromText(text) {
   const raw = cleanString(text);
   if (!raw) return '';
@@ -368,7 +933,7 @@ function parseModelJson(text) {
   }
 }
 
-function normalizeAndValidateModelPayload(payload, dateReference = getDateReference()) {
+function normalizeAndValidateModelPayload(payload, dateReference = getDateReference(), textoBruto = '') {
   if (!isPlainObject(payload)) {
     throw new AIContractOrganizerError('A IA retornou estrutura inválida.', 502);
   }
@@ -420,9 +985,15 @@ function normalizeAndValidateModelPayload(payload, dateReference = getDateRefere
   }
 
   const normalizedItensDiscriminados = normalizeItensDiscriminados(payload.itens_discriminados);
+  const deterministicFinanceApplied = applyPostProcessingHeuristics(
+    textoBruto,
+    dados,
+    normalizedItensDiscriminados,
+    alertas
+  );
   reconcileValorTotalFromItens(dados, normalizedItensDiscriminados, alertas);
 
-  if (dados.valor_total !== null && dados.entrada === null && dados.saldo === null) {
+  if (dados.valor_total !== null && dados.entrada === null && dados.saldo === null && !deterministicFinanceApplied) {
     const metade = Number((dados.valor_total / 2).toFixed(2));
     dados.entrada = metade;
     dados.saldo = metade;
@@ -495,7 +1066,8 @@ function buildSystemPrompt(dateReference = getDateReference()) {
     '7) Estrutura de saída obrigatória:',
     '{ "dados": { ... }, "faltantes": [], "incertos": [], "alertas": [], "confianca": 0.0 }',
     '8) Campos obrigatórios dentro de dados:',
-    'nome_contratante, local, data_evento, dia_semana, horario_inicio, horario_fim, horario_chegada, qtd_criancas, faixa_etaria, aniversariante, tema, espaco, servico_contratado, valor_total, entrada, saldo, informacoes.',
+    'nome_contratante, local, data_evento, dia_semana, horario_inicio, horario_fim, horario_chegada, qtd_criancas, faixa_etaria, aniversariante, tema, espaco, servico_contratado, valor_total, entrada, saldo, informacoes;',
+    'campo opcional em dados: extras (texto dos extras separados por vírgula).',
     '9) Campo opcional de topo permitido: itens_discriminados (array de objetos { "descricao": string, "valor": number|null }).',
     '10) "confianca" deve ser número de 0 a 1.',
     '11) Contratante: reconhecer também como cliente, responsável, mãe, pai.',
@@ -507,26 +1079,30 @@ function buildSystemPrompt(dateReference = getDateReference()) {
     '17) Se só existir horário inicial, horario_fim = +3h e registrar alerta "Horário final não informado; assumida duração padrão de 3 horas.".',
     '18) horario_chegada: sempre 20 minutos antes de horario_inicio.',
     '19) contato_hora_do_lazer, se existir no schema do contexto, deve ser sempre "(81) 99761-7476".',
-    '20) Classificação serviço principal vs EXTRA (obrigatório):',
-    '21) EXTRAS — sempre classificar como extra em itens_discriminados (nunca como único serviço principal), mesmo junto do pacote:',
-    'Torta na Cara; Caça ao Tesouro; Quebra Panela; Escultura em Balões; Kit Futebol; Som e Microfone; Hora Extra.',
-    '22) EXTRAS — oficinas e afins: qualquer item que contenha "oficina" ou equivalente é EXTRA, incluindo:',
-    'Oficina de Slime; Oficina de Culinária; Oficina de Massinha de Modelar; Oficina de Bijuterias;',
-    'Pintura em Tela; Pintura em Gesso; Oficina Bob Goods; Massinha de Modelar.',
-    '23) Serviço PRINCIPAL (preferencial quando existir no texto): Recreador/Recreadores; Recreação;',
-    'Pool Party (Básico ou Completo); Recreação Sensorial; Recreação para Adultos; Camarim Kids;',
-    'personagens vivos (ex.: Mickey, Minnie, Patati e Patatá); Papai Noel; Papai Noel com Duende;',
-    'Promotor de Evento; Serviço com Ator.',
-    '24) Quando houver principal + um ou mais extras no mesmo texto,',
-    'servico_contratado deve descrever preferencialmente só o serviço principal (ex.: "1 Recreador").',
-    '25) itens_discriminados: um objeto por item cobrado com descricao e valor quando houver preço;',
-    'listar primeiro o serviço principal, depois cada extra com nome padronizado (ex.: "Caça ao Tesouro").',
-    '26) valor_total = soma dos valores em itens_discriminados quando todos tiverem valor informado.',
-    '27) Aceitar variações de escrita, plural, acentuação e caixa para reconhecer os itens acima.',
-    '28) Valores: reconhecer R$ 600,00, 600 reais, entrada/sinal, saldo/restante, deslocamento e hora extra.',
-    '29) Se valor_total existir e entrada/saldo não forem informados no texto, o backend pode calcular 50%/50%;',
-    'na saída da IA, deixe entrada e saldo como null quando não explícitos.',
-    '30) Região/cidade/estado: quando conseguir inferir por local, registrar em alertas como metadado (sem quebrar o schema atual).',
+    '20) CRÍTICO — servico_contratado: somente a descrição do SERVIÇO PRINCIPAL (uma linha); máximo ~150 caracteres no backend;',
+    'NUNCA incluir bloco "Dados:", listas de nomes de crianças, endereço, nem colar o texto bruto/instruções.',
+    '21) CRÍTICO — itens_discriminados: descrições CURTAS por item (ex.: "1 recreador", "caça ao tesouro") + valor;',
+    'nunca listas longas, nem texto bruto; máximo ~80 caracteres por descrição no backend.',
+    '22) Classificação serviço principal vs EXTRA:',
+    'EXTRAS — Torta na Cara; Caça ao Tesouro; Quebra Panela; Escultura em Balões; Kit Futebol; Som e Microfone; Hora Extra;',
+    'oficinas: qualquer item com "oficina" ou equivalente; Pintura em Tela/Gesso; Massinha de Modelar; etc.',
+    '23) Serviço PRINCIPAL (quando existir): Recreador/Recreadores; Recreação; Pool Party; Recreação Sensorial;',
+    'Camarim Kids; personagens; Papai Noel; Promotor; Serviço com Ator.',
+    '24) Quando houver "serviço principal + extra" no mesmo trecho (ex.: "… R$ 300 + escultura em balões R$ 45"):',
+    'servico_contratado = só o trecho do serviço principal (sem extra); itens_discriminados = linhas curtas + valores;',
+    'não repetir listas de crianças nem blocos "Dados:" em servico ou itens.',
+    '25) valor_total = soma dos valores em itens_discriminados quando todos tiverem valor informado.',
+    '26) Aceitar variações de escrita, plural, acentuação e caixa.',
+    '27) Valores: R$ 600,00, 600 reais, entrada/sinal, saldo/restante, deslocamento e hora extra.',
+    '28) Se valor_total existir e entrada/saldo não forem explícitos no texto, deixe entrada e saldo null (o backend pode calcular 50%/50%).',
+    '29) CRÍTICO — qtd_criancas: se o texto disser explicitamente "N crianças" ou "N criancas", use exatamente N;',
+    'não estime quantidade contando nomes de crianças (lista de nomes é só complemento).',
+    '30) espaco: descrever o tipo de espaço sem redundância (ex.: "pequeno", "salão de festas");',
+    'não usar "Espaço: Espaço pequeno" — evite repetir a palavra Espaço no início.',
+    '31) Cidade no local: Fortaleza → atendimento/cabeçalho "Atendimento Fortaleza - CE" e emissão "Fortaleza - CE";',
+    'Natal → "Atendimento Natal - RN" / "Natal - RN"; João Pessoa → "Atendimento João Pessoa - PB" / "João Pessoa - PB";',
+    'Caruaru → "Atendimento Caruaru - PE" / "Caruaru - PE"; se não houver cidade clara, assumir região Recife - PE',
+    '(o backend também normaliza isso; refletir no preenchimento de local quando fizer sentido).',
   ].join('\n');
 }
 
@@ -566,7 +1142,8 @@ async function callOpenAI(textoBruto, contexto, dateReference) {
     },
     body: JSON.stringify({
       model: process.env.OPENAI_CONTRACT_ORGANIZER_MODEL || 'gpt-4.1-mini',
-      temperature: 0.1,
+      temperature: 0,
+      top_p: 1,
       max_output_tokens: 1200,
       input: [
         { role: 'system', content: [{ type: 'input_text', text: buildSystemPrompt(dateReference) }] },
@@ -604,7 +1181,7 @@ async function organizeContractTextWithAI({ texto_bruto, contexto }) {
   const apiData = await callOpenAI(textoBruto, isPlainObject(contexto) ? contexto : {}, dateReference);
   const responseText = extractResponseText(apiData);
   const modelPayload = parseModelJson(responseText);
-  const normalizedPayload = normalizeAndValidateModelPayload(modelPayload, dateReference);
+  const normalizedPayload = normalizeAndValidateModelPayload(modelPayload, dateReference, textoBruto);
   const finalReturn = {
     ok: true,
     dados: normalizedPayload.dados,
