@@ -372,11 +372,124 @@ const EXTRA_NEEDLES_NORMALIZED = [
   'oficina bob goods',
 ].map((s) => normalizeTextForExtrasMatch(s));
 
+/**
+ * Indica serviço principal na linha (pacote). Se verdadeiro, a linha não é tratada como extra só por conter palavra de extra.
+ */
+function hasPrincipalServiceInLine(desc) {
+  const key = normalizeTextForExtrasMatch(desc);
+  if (!key.trim()) return false;
+  if (/\b\d+\s+recreador/.test(key)) return true;
+  if (/\brecreador(es)?\b/.test(key)) return true;
+  if (key.includes('recreacao')) return true;
+  if (key.includes('animacao')) return true;
+  if (key.includes('pool party')) return true;
+  if (key.includes('sensorial')) return true;
+  if (key.includes('camarim kids')) return true;
+  if (key.includes('papai noel')) return true;
+  if (key.includes('promotor')) return true;
+  if (key.includes('servico com ator')) return true;
+  if (key.includes('personagem')) return true;
+  return false;
+}
+
 function isExtraDescription(desc) {
+  if (hasPrincipalServiceInLine(desc)) return false;
   const key = normalizeTextForExtrasMatch(desc);
   if (!key.trim()) return false;
   if (key.includes('oficina')) return true;
   return EXTRA_NEEDLES_NORMALIZED.some((needle) => key.includes(needle));
+}
+
+/** Padrões para retirar extras embutidos na mesma linha do pacote (ordem: mais específicos primeiro). */
+const EMBEDDED_EXTRA_PATTERNS = [
+  { re: /\boficina\s+de\s+bijuterias?\b/gi, label: 'Oficina de bijuterias' },
+  { re: /\boficina\s+de\s+culin[aá]ria\b/gi, label: 'Oficina de culinária' },
+  { re: /\boficina\s+de\s+slime\b/gi, label: 'Oficina de slime' },
+  { re: /\boficina\s+bob\s+goods\b/gi, label: 'Oficina bob goods' },
+  { re: /\bmassinha\s+de\s+modelar\b/gi, label: 'Massinha de modelar' },
+  { re: /\bca[çc]a\s+ao\s+tesouro\b/gi, label: 'Caça ao tesouro' },
+  { re: /\bsom\s+e\s+microfone\b/gi, label: 'Som e microfone' },
+  { re: /\bescultura\s+em\s+bal(ões|oes)\b/gi, label: 'Escultura em balões' },
+  { re: /\bpintura\s+em\s+tela\b/gi, label: 'Pintura em tela' },
+  { re: /\bpintura\s+em\s+gesso\b/gi, label: 'Pintura em gesso' },
+  { re: /\bquebra\s+panela\b/gi, label: 'Quebra panela' },
+  { re: /\btorta\s+na\s+cara\b/gi, label: 'Torta na cara' },
+  { re: /\bkit\s+futebol\b/gi, label: 'Kit futebol' },
+  { re: /\bhora\s+extra\b/gi, label: 'Hora extra' },
+  { re: /\boficina\b/gi, label: 'Oficina' },
+];
+
+function cleanupPrincipalAfterExtraRemoval(s) {
+  let t = collapseWhitespaceSingleLine(s);
+  t = t.replace(/\s*,\s*,+/g, ', ');
+  t = t.replace(/,\s*e\s+/gi, ' e ');
+  t = t.replace(/^\s*,\s*/, '');
+  t = t.replace(/\s*,\s*$/, '');
+  t = t.replace(/\s+e\s+e\s+/gi, ' e ');
+  return collapseWhitespaceSingleLine(t);
+}
+
+/**
+ * Em linha mista (ex.: recreadores + escultura em balões), devolve texto do serviço principal sem os trechos de extra e lista de rótulos dos extras retirados.
+ */
+function splitEmbeddedExtrasFromPrincipalDescription(desc) {
+  const raw = cleanString(desc);
+  if (!raw || !hasPrincipalServiceInLine(raw)) {
+    return { principalText: raw, embeddedExtras: [] };
+  }
+  let work = raw;
+  const embeddedExtras = [];
+  for (const { re, label } of EMBEDDED_EXTRA_PATTERNS) {
+    const rx = new RegExp(re.source, 'gi');
+    if (!rx.test(work)) continue;
+    embeddedExtras.push(label);
+    work = work.replace(new RegExp(re.source, 'gi'), ' ');
+  }
+  work = cleanupPrincipalAfterExtraRemoval(work);
+  return { principalText: work, embeddedExtras };
+}
+
+function uniqueExtrasCommaList(parts) {
+  const seen = new Set();
+  const out = [];
+  for (const p of parts) {
+    const t = cleanString(p);
+    if (!t) continue;
+    const k = normalizeTextForExtrasMatch(t);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out.join(', ');
+}
+
+function applyMixedLineSplitFromPrincipalItem(dados, itensDiscriminados, alertas) {
+  const idx = itensDiscriminados.findIndex((i) => i.descricao && !isExtraDescription(i.descricao));
+  if (idx < 0) return;
+
+  const full = cleanString(itensDiscriminados[idx].descricao);
+  if (!full || !hasPrincipalServiceInLine(full)) return;
+
+  const split = splitEmbeddedExtrasFromPrincipalDescription(full);
+  if (!split.embeddedExtras.length) return;
+
+  const prevServico = cleanString(dados.servico_contratado);
+  const prevExtras = cleanString(dados.extras);
+
+  dados.servico_contratado = split.principalText;
+
+  const merged = uniqueExtrasCommaList([
+    ...prevExtras.split(',').map((s) => s.trim()).filter(Boolean),
+    ...split.embeddedExtras,
+  ]);
+  dados.extras = merged;
+
+  const norm = (s) => normalizeTextForExtrasMatch(s);
+  const changed =
+    norm(split.principalText) !== norm(prevServico) || norm(merged) !== norm(prevExtras);
+  if (changed) {
+    alertas.push('Serviço principal e extras ajustados em linha mista (pacote + adicional).');
+  }
 }
 
 /** Serviço principal (linha com valor) — não é extra. */
@@ -385,7 +498,9 @@ function isLikelyPrincipalLine(desc) {
   if (!key.trim() || isExtraDescription(desc)) return false;
   if (/\b\d+\s+recreador/.test(key)) return true;
   if (key.includes('recreacao')) return true;
+  if (key.includes('animacao')) return true;
   if (key.includes('pool party')) return true;
+  if (key.includes('sensorial')) return true;
   if (key.includes('camarim kids')) return true;
   if (key.includes('papai noel')) return true;
   if (key.includes('promotor')) return true;
@@ -662,9 +777,11 @@ function extractDeterministicContractParts(textoBruto) {
   if (principalIdx < 0) principalIdx = 0;
 
   const principal = parsedLines[principalIdx];
-  const servico_contratado = principal.descricao.trim();
+  const principalDescRaw = principal.descricao.trim();
+  const splitPrincipal = splitEmbeddedExtrasFromPrincipalDescription(principalDescRaw);
+  const servico_contratado = splitPrincipal.principalText;
 
-  const extrasParts = [];
+  const extrasParts = [...splitPrincipal.embeddedExtras];
   for (let i = 0; i < parsedLines.length; i++) {
     if (i === principalIdx) continue;
     if (isExtraDescription(parsedLines[i].descricao)) {
@@ -686,12 +803,12 @@ function extractDeterministicContractParts(textoBruto) {
 
   return {
     servico_contratado,
-    extras: extrasParts.join(', '),
+    extras: uniqueExtrasCommaList(extrasParts),
     itens_discriminados: orderedItens,
     valor_total,
     entrada: half,
     saldo: half,
-    principalFallback: servico_contratado,
+    principalFallback: principalDescRaw,
   };
 }
 
@@ -808,6 +925,16 @@ function syncPrincipalServicoEItens(dados, itens) {
   const servico = cleanString(dados.servico_contratado);
   const itemPrincipal = itens[idx]?.descricao ? cleanString(itens[idx].descricao) : '';
 
+  const preservePackageItem =
+    hasPrincipalServiceInLine(itemPrincipal) &&
+    servico &&
+    itemPrincipal.length > servico.length + 5;
+
+  if (preservePackageItem) {
+    dados.servico_contratado = servico;
+    return;
+  }
+
   const escolhido =
     servico.length >= itemPrincipal.length ? servico : itemPrincipal || servico;
   if (!escolhido) return;
@@ -883,6 +1010,7 @@ function applyPostProcessingHeuristics(textoBruto, dados, itensDiscriminados, al
     { fromDeterministicExtract, principalFallback },
     alertas
   );
+  applyMixedLineSplitFromPrincipalItem(dados, itensDiscriminados, alertas);
   syncPrincipalServicoEItens(dados, itensDiscriminados);
   applyLengthLimitsServicoEItens(dados, itensDiscriminados);
 
@@ -965,9 +1093,14 @@ function normalizeAndValidateModelPayload(payload, dateReference = getDateRefere
   // Guardrail final: mantém data_evento no padrão DD/MM/AAAA ou vazio.
   dados.data_evento = normalizeDateWithCurrentYear(dados.data_evento, alertas, dateReference.currentYear);
   const diaSemanaCalculado = computeDiaSemana(dados.data_evento);
-  if (diaSemanaCalculado && !cleanString(dados.dia_semana)) {
+  if (diaSemanaCalculado) {
+    const diaSemanaAnterior = cleanString(dados.dia_semana);
     dados.dia_semana = diaSemanaCalculado;
-    alertas.push(`Dia da semana calculado automaticamente: ${diaSemanaCalculado}.`);
+    if (!diaSemanaAnterior) {
+      alertas.push(`Dia da semana calculado automaticamente: ${diaSemanaCalculado}.`);
+    } else if (diaSemanaAnterior.toLowerCase() !== diaSemanaCalculado.toLowerCase()) {
+      alertas.push(`Dia da semana ajustado conforme a data do evento: ${diaSemanaCalculado}.`);
+    }
   }
   dados.horario_inicio = normalizeHora(dados.horario_inicio);
   dados.horario_fim = normalizeHora(dados.horario_fim);
