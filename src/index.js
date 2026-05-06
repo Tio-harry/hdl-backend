@@ -22,7 +22,6 @@ const { createAuthRouter } = require('./routes/authRoutes');
 const { createAdminUsersRouter } = require('./routes/adminUsersRoutes');
 const { createHomeSummaryRouter } = require('./routes/homeSummaryRoutes');
 const { createAutomaticBackupRouter } = require('./routes/automaticBackupRoutes');
-const { createPortalTalentosRouter } = require('./modules/portalTalentos');
 const { startAutomaticBackupScheduler } = require('./services/automaticBackupScheduler');
 const { bootstrapInitialGestor, ensureAuthSchema } = require('./services/authService');
 const { sendMail } = require('./services/emailService');
@@ -41,7 +40,6 @@ app.use(createAuthRouter());
 app.use(createAdminUsersRouter());
 app.use(createHomeSummaryRouter());
 app.use(createAutomaticBackupRouter());
-app.use('/api/portal-talentos', createPortalTalentosRouter());
 
 const CONTRACT_INSERT_FIELDS = [
   'nome_contratante',
