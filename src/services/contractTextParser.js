@@ -38,16 +38,17 @@ const EVENT_SECTION_ENDS = ["DETALHES DO EVENTO", "VALORES", ...STRUCTURED_SECTI
 const DETAILS_SECTION_ENDS = ["VALORES", ...STRUCTURED_SECTION_ENDS];
 
 const SERVICE_LABELS = ["serviço contratado", "servico contratado", "serviço", "servico"];
+/** Rótulos mais longos primeiro para pickLooseByLabel não cortar em "espaço" antes de "espaço da recreação". */
 const SPACE_LABELS = [
-  "espaço",
-  "espaco",
   "área da recreação",
   "area da recreacao",
   "tipo de espaço",
   "tipo de espaco",
   "espaço da recreação",
-  "espaco da recreacao"
-];
+  "espaco da recreacao",
+  "espaço",
+  "espaco"
+].sort((a, b) => normalizeText(b).length - normalizeText(a).length);
 const SPACE_CANDIDATES = [
   "piscina",
   "quadra",
@@ -530,6 +531,56 @@ function pickLooseByLabel(text, labels) {
   return "";
 }
 
+/** Meses por extenso (após normalizeText: março → marco). */
+function monthNameToNumber(token) {
+  const map = {
+    janeiro: 1,
+    fevereiro: 2,
+    marco: 3,
+    abril: 4,
+    maio: 5,
+    junho: 6,
+    julho: 7,
+    agosto: 8,
+    setembro: 9,
+    outubro: 10,
+    novembro: 11,
+    dezembro: 12
+  };
+  const k = normalizeText(String(token || ""));
+  return map[k] || null;
+}
+
+/**
+ * Extrai data no formato "26 de abril", "26 de abril de 2026", "3 de maio".
+ * Retorna "DD/M/M" ou "DD/M/M/AAAA" para normalizeDate completar ano se faltar.
+ */
+function extractPortugueseExtendedDate(value) {
+  if (!value) return "";
+  const raw = String(value)
+    .replace(/^[\s:–—\-]+/u, "")
+    .trim();
+  const monthRe =
+    "(janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)";
+  const anchored = new RegExp(`^(\\d{1,2})\\s+de\\s+${monthRe}(?:\\s+de\\s+(\\d{4}))?`, "i");
+  const embedded = new RegExp(`\\b(\\d{1,2})\\s+de\\s+${monthRe}(?:\\s+de\\s+(\\d{4}))?\\b`, "i");
+
+  let m = raw.match(anchored);
+  if (!m) m = raw.match(embedded);
+  if (!m) m = String(value).match(embedded);
+  if (!m) return "";
+
+  const dia = Number(m[1]);
+  const mesNum = monthNameToNumber(m[2]);
+  if (!mesNum || dia < 1 || dia > 31) return "";
+
+  const ano = m[3] ? String(m[3]) : "";
+  const dd = String(dia);
+  const mm = String(mesNum);
+  if (ano) return `${dd}/${mm}/${ano}`;
+  return `${dd}/${mm}`;
+}
+
 function extractFirstDate(value) {
   if (!value) return "";
 
@@ -538,6 +589,9 @@ function extractFirstDate(value) {
 
   match = String(value).match(/\b(\d{1,2})\/(\d{1,2})\b/);
   if (match) return `${match[1]}/${match[2]}`;
+
+  const ext = extractPortugueseExtendedDate(value);
+  if (ext) return ext;
 
   return "";
 }
@@ -714,6 +768,12 @@ function normalizeFaixaEtaria(value) {
   const str = String(value).trim();
 
   let match = str.match(/(\d{1,2})\s*\/\s*(\d{1,2})(?:\s*anos?)?/i);
+  if (match) return `${Number(match[1])} a ${Number(match[2])} anos`;
+
+  match = str.match(/de\s*(\d{1,2})\s+e\s*(\d{1,2})(?:\s*anos?)?/i);
+  if (match) return `${Number(match[1])} a ${Number(match[2])} anos`;
+
+  match = str.match(/(\d{1,2})\s+e\s*(\d{1,2})(?:\s*anos?)?/i);
   if (match) return `${Number(match[1])} a ${Number(match[2])} anos`;
 
   match = str.match(/de\s*(\d{1,2})\s*a\s*(\d{1,2})(?:\s*anos?)?/i);
@@ -1112,6 +1172,23 @@ function extractLooseName(text) {
   return NOT_INFORMED;
 }
 
+/** Linha cujo rótulo é campo de espaço (evita confundir com serviço por conter "recreação"). */
+function lineLooksLikeSpaceField(line) {
+  const currentNormalized = normalizeText(stripLineDecorations(line));
+  for (const label of SPACE_LABELS) {
+    const labelNormalized = normalizeText(label);
+    if (
+      currentNormalized === labelNormalized ||
+      currentNormalized === labelNormalized + ":" ||
+      currentNormalized.startsWith(labelNormalized + ":") ||
+      currentNormalized.startsWith(labelNormalized + " ")
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function extractLooseLocal(text) {
   const lines = splitLines(text);
 
@@ -1172,6 +1249,8 @@ function extractLooseService(text) {
   }
 
   for (const line of lines) {
+    if (lineLooksLikeSpaceField(line)) continue;
+
     const cleaned = cleanExtractedValue(line);
     const normalized = normalizeText(cleaned);
     if (
