@@ -1251,6 +1251,102 @@ function buildUserPrompt(textoBruto, contexto) {
   );
 }
 
+function shouldUseStructuredOutput() {
+  return process.env.AI_CONTRACT_USE_STRUCTURED_OUTPUT === 'true';
+}
+
+/**
+ * Schema para Structured Output (Responses API). Campos de texto podem ser "".
+ * Valores financeiros: number | null. Para strict mode, todos os campos de `dados` são obrigatórios.
+ */
+function buildContractOrganizerJsonSchema() {
+  const stringField = { type: 'string' };
+  const moneyField = {
+    type: ['number', 'null'],
+  };
+
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['dados', 'faltantes', 'incertos', 'alertas', 'confianca', 'itens_discriminados'],
+    properties: {
+      dados: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'nome_contratante',
+          'local',
+          'data_evento',
+          'dia_semana',
+          'horario_inicio',
+          'horario_fim',
+          'horario_chegada',
+          'qtd_criancas',
+          'faixa_etaria',
+          'aniversariante',
+          'tema',
+          'espaco',
+          'servico_contratado',
+          'extras',
+          'valor_total',
+          'entrada',
+          'saldo',
+          'informacoes',
+        ],
+        properties: {
+          nome_contratante: stringField,
+          local: stringField,
+          data_evento: stringField,
+          dia_semana: stringField,
+          horario_inicio: stringField,
+          horario_fim: stringField,
+          horario_chegada: stringField,
+          qtd_criancas: stringField,
+          faixa_etaria: stringField,
+          aniversariante: stringField,
+          tema: stringField,
+          espaco: stringField,
+          servico_contratado: stringField,
+          extras: stringField,
+          valor_total: moneyField,
+          entrada: moneyField,
+          saldo: moneyField,
+          informacoes: stringField,
+        },
+      },
+      faltantes: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      incertos: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      alertas: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+      confianca: {
+        type: 'number',
+        minimum: 0,
+        maximum: 1,
+      },
+      itens_discriminados: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['descricao', 'valor'],
+          properties: {
+            descricao: { type: 'string' },
+            valor: moneyField,
+          },
+        },
+      },
+    },
+  };
+}
+
 async function callOpenAI(textoBruto, contexto, dateReference) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -1267,22 +1363,37 @@ async function callOpenAI(textoBruto, contexto, dateReference) {
     );
   }
 
+  const useStructuredOutput = shouldUseStructuredOutput();
+
+  const requestBody = {
+    model: process.env.OPENAI_CONTRACT_ORGANIZER_MODEL || 'gpt-4.1-mini',
+    temperature: 0,
+    top_p: 1,
+    max_output_tokens: 1200,
+    input: [
+      { role: 'system', content: [{ type: 'input_text', text: buildSystemPrompt(dateReference) }] },
+      { role: 'user', content: [{ type: 'input_text', text: buildUserPrompt(textoBruto, contexto) }] },
+    ],
+  };
+
+  if (useStructuredOutput) {
+    requestBody.text = {
+      format: {
+        type: 'json_schema',
+        name: 'contract_organizer_response',
+        strict: true,
+        schema: buildContractOrganizerJsonSchema(),
+      },
+    };
+  }
+
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model: process.env.OPENAI_CONTRACT_ORGANIZER_MODEL || 'gpt-4.1-mini',
-      temperature: 0,
-      top_p: 1,
-      max_output_tokens: 1200,
-      input: [
-        { role: 'system', content: [{ type: 'input_text', text: buildSystemPrompt(dateReference) }] },
-        { role: 'user', content: [{ type: 'input_text', text: buildUserPrompt(textoBruto, contexto) }] },
-      ],
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   const rawText = await response.text();
@@ -1298,6 +1409,22 @@ async function callOpenAI(textoBruto, contexto, dateReference) {
       data?.error?.message ||
       data?.message ||
       'Falha ao consultar serviço de IA para organizar contrato.';
+    const errType = data?.error?.type || data?.error?.code || '';
+    const logPayload = {
+      status: response.status,
+      message,
+      errorType: errType,
+      structuredOutput: useStructuredOutput,
+      openaiError: data?.error ?? null,
+    };
+    if (useStructuredOutput) {
+      console.error(
+        '[aiContractOrganizer] Falha na OpenAI com Structured Output / JSON Schema:',
+        logPayload
+      );
+    } else {
+      console.error('[aiContractOrganizer] Falha na OpenAI:', logPayload);
+    }
     throw new AIContractOrganizerError(message, response.status || 502);
   }
 
