@@ -1,0 +1,18 @@
+﻿{
+  "nome_contratante": "JHONATAS PEREIRA DA SILVA",
+  "local": "NO JARDIM - RUA CAMPO GRANDE, 129, PIEDADE",
+  "data_evento": "03/05/2026",
+  "horario_inicio": "14:00",
+  "horario_fim": "17:00",
+  "horario_chegada": "13:40",
+  "qtd_criancas": "30",
+  "faixa_etaria": "2 a 14 anos",
+  "aniversariante": "Joaquim",
+  "tema": "Patrulha Canina",
+  "espaco": "Local com espaço ao ar livre, parede de pintura, parede de escalada, brinquedos de madeira e gramado",
+  "servico_contratado": "01 Recreador com brincadeiras, pintura na pele e parabéns animado",
+  "extras": "Torta na Cara",
+  "valor_total": 430,
+  "entrada": 215,
+  "saldo": 215
+}

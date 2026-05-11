@@ -1,4 +1,4 @@
-function clean(value) {
+﻿function clean(value) {
   if (!value) return "";
   return String(value).replace(/\r/g, "").trim();
 }
@@ -9,7 +9,7 @@ function normalizeText(value) {
     .replace(/\r/g, "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/�/g, "")
+    .replace(/ï¿½/g, "")
     .toLowerCase()
     .trim();
 }
@@ -32,54 +32,66 @@ function splitLines(text) {
 const NOT_INFORMED = "Não informado";
 const NO_EXTRAS = "Sem extras";
 
-const VALUE_SUMMARY_LABELS = ["valor total", "entrada", "saldo"];
+const VALUE_SUMMARY_LABELS = ["valor total", "valor combinado", "valor", "total combinado", "total geral", "sub total", "subtotal", "total", "entrada", "saldo"];
 const STRUCTURED_SECTION_ENDS = ["CONTRATANTE", "CONTRATADA"];
 const EVENT_SECTION_ENDS = ["DETALHES DO EVENTO", "VALORES", ...STRUCTURED_SECTION_ENDS];
 const DETAILS_SECTION_ENDS = ["VALORES", ...STRUCTURED_SECTION_ENDS];
 
-const SERVICE_LABELS = ["serviço contratado", "servico contratado", "serviço", "servico"];
-/** Rótulos mais longos primeiro para pickLooseByLabel não cortar em "espaço" antes de "espaço da recreação". */
+const SERVICE_LABELS = ["serviÃ§o contratado", "servico contratado", "serviÃ§o", "servico"];
+/** RÃ³tulos mais longos primeiro para pickLooseByLabel nÃ£o cortar em "espaÃ§o" antes de "espaÃ§o da recreaÃ§Ã£o". */
 const SPACE_LABELS = [
-  "área da recreação",
+  "Ã¡rea da recreaÃ§Ã£o",
   "area da recreacao",
-  "tipo de espaço",
+  "tipo de espaÃ§o",
   "tipo de espaco",
-  "espaço da recreação",
+  "espaÃ§o da recreaÃ§Ã£o",
   "espaco da recreacao",
-  "espaço",
+  "espaÃ§o",
   "espaco"
 ].sort((a, b) => normalizeText(b).length - normalizeText(a).length);
 const SPACE_CANDIDATES = [
   "piscina",
   "quadra",
   "campo",
-  "salão de festa",
+  "salÃ£o de festa",
   "salao de festa",
   "pequeno",
-  "médio",
+  "mÃ©dio",
   "medio",
   "grande"
 ];
 const EXTRA_DEFINITIONS = [
   {
-    label: "escultura em balões",
+    label: "Escultura em balões",
     itemDescricao: "Escultura em balões",
-    aliases: ["escultura em baloes", "escultura em balões"],
+    aliases: ["escultura em baloes"],
     valor: 45
   },
   {
-    label: "caça ao tesouro",
+    label: "Caça ao Tesouro",
     itemDescricao: "Caça ao Tesouro",
-    aliases: ["caca ao tesouro", "caça ao tesouro"],
+    aliases: ["caca ao tesouro"],
     valor: 80
   },
-  { label: "quebra panela", itemDescricao: "Quebra Panela", aliases: ["quebra panela"], valor: 80 },
-  { label: "torta na cara", itemDescricao: "Torta na Cara", aliases: ["torta na cara"], valor: 100 },
+  { label: "Quebra Panela", itemDescricao: "Quebra Panela", aliases: ["quebra panela"], valor: 80 },
+  { label: "Torta na Cara", itemDescricao: "Torta na Cara", aliases: ["torta na cara"], valor: 130 },
   {
-    label: "caixa de som e microfone",
-    itemDescricao: "Caixa de som e microfone",
+    label: "Som e Microfone",
+    itemDescricao: "Som e Microfone",
     aliases: ["caixa de som e microfone", "som e microfone"],
-    valor: 150
+    valor: 130
+  },
+  {
+    label: "Taxa de deslocamento",
+    itemDescricao: "Taxa de deslocamento",
+    aliases: ["taxa de deslocamento", "deslocamento"],
+    valor: 60
+  },
+  {
+    label: "Futebol",
+    itemDescricao: "Futebol",
+    aliases: ["futebol"],
+    valor: 80
   }
 ];
 
@@ -98,31 +110,31 @@ const FORM_INSTRUCTION_PATTERNS = [
 ];
 
 const LOCAL_LABELS = [
-  "local da festa e ponto de referência",
+  "local da festa e ponto de referÃªncia",
   "local da festa e ponto de referencia",
   "local da festa",
-  "endereço",
+  "endereÃ§o",
   "endereco",
   "local"
 ];
 
 const LOOSE_VALUE_STOP_LABELS = [
   "formato da acao",
-  "formato da aÃ§Ã£o",
+  "formato da aÃƒÂ§ÃƒÂ£o",
   "datas e horarios",
-  "datas e horÃ¡rios",
+  "datas e horÃƒÂ¡rios",
   "servico contratado",
-  "serviÃ§o contratado",
+  "serviÃƒÂ§o contratado",
   "investimento",
   "investimento total",
   "investimento total da proposta",
   "observacoes",
-  "observaÃ§Ãµes",
+  "observaÃƒÂ§ÃƒÂµes",
   "dados bancarios",
-  "dados bancÃ¡rios",
+  "dados bancÃƒÂ¡rios",
   "forma de pagamento",
   "responsavel pela proposta",
-  "responsÃ¡vel pela proposta",
+  "responsÃƒÂ¡vel pela proposta",
   "valor total",
   "valor",
   "total"
@@ -166,24 +178,24 @@ const FORM_LABELS = [
   "data da festa",
   "data do evento",
   "data",
-  "horário",
+  "horÃ¡rio",
   "horario",
-  "horário do evento",
+  "horÃ¡rio do evento",
   "horario do evento",
-  "horário que inicia",
+  "horÃ¡rio que inicia",
   "horario que inicia",
-  "início",
+  "inÃ­cio",
   "inicio",
   "aniversariante",
   "tema",
   "extras",
-  "quantidade de crianças",
+  "quantidade de crianÃ§as",
   "quantidade de criancas",
-  "número de crianças",
+  "nÃºmero de crianÃ§as",
   "numero de criancas",
-  "qtd crianças",
+  "qtd crianÃ§as",
   "qtd criancas",
-  "faixa etária",
+  "faixa etÃ¡ria",
   "faixa etaria",
   "idade",
   "detalhes"
@@ -342,7 +354,7 @@ function isUsefulLooseValue(line) {
 function normalizeLooseContractInput(text) {
   let current = String(text || "")
     .replace(/[\u200B-\u200F\u2060\uFEFF]/g, "")
-    .replace(/[•◦‣⁃∙·\uFFFD]+/g, "\n")
+    .replace(/(?:•|◦|‣|⁃|∙|·|â€¢|â—¦|â€£|âƒ|âˆ™|Â·|\uFFFD)+/g, "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\s*\n\s*/g, "\n")
     .trim();
@@ -386,7 +398,7 @@ function normalizedIncludesAny(normalizedText, aliases) {
 }
 
 function isValueSummaryLine(line) {
-  const normalizedLine = normalizeText(line);
+  const normalizedLine = normalizeText(line).replace(/\s+/g, " ").trim();
   return VALUE_SUMMARY_LABELS.some((label) => normalizedLine.startsWith(label));
 }
 
@@ -395,7 +407,7 @@ function findLineStartingWith(lines, label) {
 }
 
 function normalizeSpaceCandidate(value) {
-  return value === "medio" ? "médio" : value;
+  return value === "medio" ? "mÃ©dio" : value;
 }
 
 function extractSpaceCandidate(text) {
@@ -410,17 +422,293 @@ function extractSpaceCandidate(text) {
   return "";
 }
 
-function buildHorarioFromSource(source) {
-  const times = extractTimes(source);
-  const inicio = times[0] ? padTime(times[0]) : NOT_INFORMED;
-  const fim = !isNotInformed(inicio) ? addHours(inicio, 3) : NOT_INFORMED;
-  const chegada = !isNotInformed(inicio) ? subtractMinutes(inicio, 20) : NOT_INFORMED;
+function normalizeLooseListSeparator(value) {
+  return String(value || "")
+    .replace(/[;|]+/g, ", ")
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function formatLooseLocalValue(value) {
+  if (!value) return "";
+
+  let current = cleanExtractedValue(value)
+    .replace(/^(?:endere[cç]o(?:\s+da\s+festa)?|local(?:\s+da\s+festa(?:\s+e\s+ponto\s+de\s+refer[eê]ncia)?)?)\s*:?\s*/i, "")
+    .replace(/^(?:ponto\s+de\s+refer[eê]ncia|refer[eê]ncia)\s*:?\s*/i, "")
+    .replace(/^da\s+festa\b\s*/i, "")
+    .replace(/\(([^)]+)\)/g, (_, inner) => `, ${titleCase(inner)}`)
+    .replace(/(\d{1,4})\s+([A-ZÀ-Ý]{3,})(\s*)$/u, "$1, $2$3");
+
+  current = current
+    .replace(/\bcep\b\s*(\d{5}-\d{3})/i, "CEP $1")
+    .replace(/,\s*Casa\s+([^,]+?)\s*,?\s*CEP\s*(\d{5}-\d{3})/i, (_, bairro, cep) => `, casa, ${titleCase(bairro)}, CEP ${cep}`)
+    .replace(/\s+-\s+CEP\s*(\d{5}-\d{3})/i, ", CEP $1")
+    .replace(/\s*-\s*,\s*CEP\s*(\d{5}-\d{3})/i, ", CEP $1")
+    .replace(/\s*-\s*(?=CEP\s*\d{5}-\d{3})/i, ", ");
+
+  current = normalizeLooseListSeparator(current)
+    .replace(/\s+,/g, ",")
+    .replace(/,+/g, ",")
+    .replace(/,\s*,/g, ", ")
+    .replace(/^\s*,\s*/, "")
+    .trim();
+
+  return current;
+}
+
+function isLikelyStopLineForLooseLocal(line) {
+  const normalized = normalizeText(line);
+  return (
+    !normalized ||
+    normalized.startsWith("data da festa") ||
+    normalized.startsWith("data do evento") ||
+    normalized === "data" ||
+    normalized.startsWith("horario") ||
+    normalized.startsWith("horÃƒÂ¡rio") ||
+    normalized.startsWith("detalhes") ||
+    normalized.startsWith("qual o servico contratado") ||
+    normalized.startsWith("servico contratado") ||
+    normalized.startsWith("valor total") ||
+    normalized.startsWith("valor") ||
+    normalized.startsWith("entrada") ||
+    normalized.startsWith("saldo") ||
+    normalized.startsWith("aniversariante") ||
+    normalized.startsWith("tema")
+  );
+}
+
+function lineLooksLikeServiceWithMoney(line) {
+  const normalized = normalizeText(line);
+  return (
+    extractTrailingMoneyValue(line) !== null &&
+    (
+      normalized.includes("recreador") ||
+      normalized.includes("recreacao") ||
+      normalized.includes("recreaÃƒÂ§ÃƒÂ£o") ||
+      normalized.includes("pool party") ||
+      normalized.includes("som e microfone") ||
+      normalized.includes("escultura em bal") ||
+      normalized.includes("torta na cara")
+    )
+  );
+}
+
+function lineLooksLikeLocal(line) {
+  const normalized = normalizeText(line);
+  return (
+    normalized.includes("rua ") ||
+    normalized.includes("avenida ") ||
+    normalized.includes("av. ") ||
+    normalized.includes("travessa ") ||
+    normalized.includes("estrada ") ||
+    normalized.includes("condominio") ||
+    normalized.includes("condomÃƒÂ­nio") ||
+    normalized.includes("espaco ") ||
+    normalized.includes("espaÃƒÂ§o ") ||
+    normalized.includes("salao de festa") ||
+    normalized.includes("salao de festas") ||
+    normalized.includes("salÃƒÂ£o de festa") ||
+    normalized.includes("salÃƒÂ£o de festas") ||
+    normalized.includes("proximo") ||
+    normalized.includes("prÃƒÂ³ximo") ||
+    normalized.includes("bairro") ||
+    normalized.includes("paulista") ||
+    normalized.includes("piedade") ||
+    normalized.includes("casa amarela") ||
+    normalized.startsWith("no jardim")
+  );
+}
+
+function collectLooseLocalParts(lines, startIndex, seedValue = "") {
+  const parts = [];
+  if (seedValue && isUsefulLooseValue(seedValue)) {
+    parts.push(formatLooseLocalValue(seedValue));
+  }
+
+  for (let i = startIndex; i < lines.length; i++) {
+    const current = cleanExtractedValue(lines[i]);
+    if (!current) continue;
+    if (isLikelyStopLineForLooseLocal(current) || isFormLabelLine(current)) break;
+    if (extractFirstDate(current) || extractTimes(current).length) break;
+    if (lineLooksLikeServiceWithMoney(current)) break;
+
+    const referenceValue = cleanExtractedValue(
+      current.replace(/^(?:ponto\s+de\s+refer[eê]ncia|refer[eê]ncia)\s*:?\s*/i, "")
+    );
+    const isReferenceLine = referenceValue !== current;
+
+    if (lineLooksLikeLocal(current) || isReferenceLine || parts.length > 0) {
+      parts.push(formatLooseLocalValue(isReferenceLine ? referenceValue : current));
+    }
+  }
+
+  return normalizeLooseListSeparator(parts.filter(Boolean).join(", "));
+}
+
+function extractAgeNumbersFromText(text) {
+  const source = String(text || "")
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, " ")
+    .replace(/\br\$\s*[\d\.\,]+\b/gi, " ")
+    .replace(/\b\d{1,2}:\d{2}\b/g, " ")
+    .replace(/\b\d{1,2}h\b/gi, " ");
+
+  const ages = [];
+  let match;
+
+  const rangeRegex = /(\d{1,2})\s*(?:a|\/)\s*(\d{1,2})\s*anos?\b/gi;
+  while ((match = rangeRegex.exec(source))) {
+    ages.push(Number(match[1]), Number(match[2]));
+  }
+
+  const betweenRegex = /(?:entre|de)\s*(\d{1,2})\s*(?:e|a)\s*(\d{1,2})\s*anos?\b/gi;
+  while ((match = betweenRegex.exec(source))) {
+    ages.push(Number(match[1]), Number(match[2]));
+  }
+
+  const singleRegex = /\b(\d{1,2})\s*anos?\b/gi;
+  while ((match = singleRegex.exec(source))) {
+    ages.push(Number(match[1]));
+  }
+
+  for (const line of splitLines(source)) {
+    const normalized = normalizeText(line);
+    if (!normalized.includes("maioria") && !normalized.includes("idade")) continue;
+
+    const fallbackMatches =
+      line.match(/\bde\s+(\d{1,2})(?!\s*\/)(?!:\d{2})(?!\s*(?:crian\S*|convidad\S*|participante\S*))\b/g) || [];
+    for (const token of fallbackMatches) {
+      const numeric = Number((token.match(/\d{1,2}/) || [])[0]);
+      if (!Number.isNaN(numeric) && numeric <= 17) {
+        ages.push(numeric);
+      }
+    }
+  }
+
+  return ages.filter((age) => Number.isFinite(age) && age >= 0 && age <= 17);
+}
+
+function buildFaixaEtariaFromAges(ages) {
+  if (!ages.length) return "";
+  const min = Math.min(...ages);
+  const max = Math.max(...ages);
+  return min === max ? `${min} anos` : `${min} a ${max} anos`;
+}
+
+function normalizeKnownTheme(value) {
+  const normalized = normalizeText(value);
+  if (normalized === "homem aranha") return "Homem-Aranha";
+  return titleCase(value);
+}
+
+function cleanThemeValue(value) {
+  return cleanExtractedValue(
+    String(value || "").replace(/^(?:tema(?:\s+da\s+festa)?|da\s+festa)\s*:?\s*/i, "")
+  );
+}
+
+function cleanEspacoValue(value) {
+  let current = cleanExtractedValue(String(value || ""));
+  if (!current) return "";
+
+  current = current
+    .replace(/\(([^)]+)\)/g, "")
+    .replace(/,\s*(?:\d{1,3}\s+crian\S*|\d{1,2}\s*anos?|tema\b.*|aniversariante\b.*)$/i, "")
+    .replace(/^local com\s+/i, "Local com ")
+    .replace(/\balguns?\s+brinquedos\s+de\s+madeira\b/i, "brinquedos de madeira")
+    .replace(/,\s*gramado$/i, " e gramado")
+    .replace(/,\s*$/, "")
+    .trim();
+
+  const normalized = normalizeText(current);
+  if (normalized.startsWith("espaco pequeno") || normalized.startsWith("espaÃ§o pequeno")) return "Espaco pequeno";
+  if (normalized.startsWith("espaco medio") || normalized.startsWith("espaÃ§o medio") || normalized.startsWith("espaÃ§o mÃ©dio")) return "Espaco medio";
+  if (normalized.startsWith("espaco grande") || normalized.startsWith("espaÃ§o grande")) return "Espaco grande";
+  if (normalized.startsWith("pequeno")) return "Espaco pequeno";
+  if (normalized.startsWith("medio") || normalized.startsWith("mÃƒÂ©dio")) return "Espaco medio";
+  if (normalized.startsWith("grande")) return "Espaco grande";
+  if (normalized.startsWith("salao de festa do condominio") || normalized.startsWith("salÃƒÂ£o de festa do condomÃƒÂ­nio")) {
+    return "Salao de festa do condominio";
+  }
+  if (
+    normalized.startsWith("salao de festa") ||
+    normalized.startsWith("salao de festas") ||
+    normalized.startsWith("salÃƒÂ£o de festa") ||
+    normalized.startsWith("salÃƒÂ£o de festas")
+  ) {
+    return current.charAt(0).toLocaleUpperCase("pt-BR") + current.slice(1).toLocaleLowerCase("pt-BR");
+  }
+  if (normalized.startsWith("espaco ") || normalized.startsWith("espaÃƒÂ§o ")) {
+    const nomeEspaco = titleCase(current.replace(/^espa[cç]o\s+/i, "").split(",")[0].trim());
+    return `Espaço ${nomeEspaco}`;
+  }
+
+  return current;
+}
+
+function extractServiceMoneyItems(text) {
+  const items = [];
+
+  for (const rawLine of splitLines(text)) {
+    const line = cleanExtractedValue(rawLine);
+    if (!line || isValueSummaryLine(line)) continue;
+
+    const value = extractTrailingMoneyValue(line);
+    if (value === null) continue;
+
+    const descricao = cleanExtractedValue(
+      line
+        .replace(/\s*(?:r\$\s*[\d\.\,]+|\d{1,6}[.,]\d{2}|\d{1,6}\s*reais?)\s*$/i, "")
+        .replace(/[Ã¢â‚¬â€œÃ¢â‚¬â€-]+/g, " ")
+    );
+
+    if (!descricao || !/[A-Za-zÃƒâ‚¬-ÃƒÂ¿]/.test(descricao)) continue;
+
+    items.push({
+      descricao: cleanServico(descricao),
+      valor: value
+    });
+  }
+
+  return items;
+}
+
+function buildHorarioValues(inicio, fimOverride = NOT_INFORMED) {
+  const inicioPad = inicio ? padTime(inicio) : NOT_INFORMED;
+  const fim = !isNotInformed(inicioPad)
+    ? (fimOverride && !isNotInformed(fimOverride) ? padTime(fimOverride) : addHours(inicioPad, 3))
+    : NOT_INFORMED;
+  const chegada = !isNotInformed(inicioPad) ? subtractMinutes(inicioPad, 20) : NOT_INFORMED;
 
   return {
-    horario_inicio: inicio,
+    horario_inicio: inicioPad,
     horario_fim: fim,
     horario_chegada: chegada
   };
+}
+
+function extractExplicitTimeRange(source) {
+  const times = extractTimes(source);
+  if (times.length < 2) return null;
+
+  const normalized = normalizeText(source).replace(/\s+/g, " ");
+  const hasExplicitRange = /(das?\s*)?\d{1,2}(?::\d{2})?\s*h?\s*(?:as|a|ate|até|-)\s*\d{1,2}(?::\d{2})?\s*h?/.test(normalized);
+  if (!hasExplicitRange) return null;
+
+  return {
+    inicio: times[0],
+    fim: times[1]
+  };
+}
+
+function buildHorarioFromSource(source) {
+  const explicitRange = extractExplicitTimeRange(source);
+  if (explicitRange) {
+    return buildHorarioValues(explicitRange.inicio, explicitRange.fim);
+  }
+
+  const times = extractTimes(source);
+  return buildHorarioValues(times[0] || NOT_INFORMED);
 }
 
 function buildParsedResponse(fields) {
@@ -531,7 +819,7 @@ function pickLooseByLabel(text, labels) {
   return "";
 }
 
-/** Meses por extenso (após normalizeText: março → marco). */
+/** Meses por extenso (apÃ³s normalizeText: marÃ§o â†’ marco). */
 function monthNameToNumber(token) {
   const map = {
     janeiro: 1,
@@ -558,10 +846,10 @@ function monthNameToNumber(token) {
 function extractPortugueseExtendedDate(value) {
   if (!value) return "";
   const raw = String(value)
-    .replace(/^[\s:–—\-]+/u, "")
+    .replace(/^[\s:â€“â€”\-]+/u, "")
     .trim();
   const monthRe =
-    "(janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)";
+    "(janeiro|fevereiro|mar[cÃ§]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)";
   const anchored = new RegExp(`^(\\d{1,2})\\s+de\\s+${monthRe}(?:\\s+de\\s+(\\d{4}))?`, "i");
   const embedded = new RegExp(`\\b(\\d{1,2})\\s+de\\s+${monthRe}(?:\\s+de\\s+(\\d{4}))?\\b`, "i");
 
@@ -660,7 +948,7 @@ function normalizeHourToken(token, fullSourceText = "") {
 
   const hasMorningHint =
     sourceNormalized.includes("manha") ||
-    sourceNormalized.includes("manhã") ||
+    sourceNormalized.includes("manhÃ£") ||
     sourceNormalized.includes("am");
 
   const hasAfternoonHint =
@@ -709,7 +997,7 @@ function extractTimes(value) {
   if (!value) return [];
 
   const normalized = String(value)
-    .replace(/às/gi, " as ")
+    .replace(/Ã s/gi, " as ")
     .replace(/\s+/g, " ");
 
   const matches = normalized.match(/\b\d{1,2}(?::\d{2})?\s*h\b|\b\d{1,2}:\d{2}\b/gi) || [];
@@ -811,9 +1099,9 @@ function extractLabeledMoneyFromLine(line) {
   if (!line) return null;
 
   const normalized = normalizeText(line).replace(/\s+/g, " ");
-  if (!/^(?:valor(?:\s+total)?|total)\b/.test(normalized)) return null;
+  if (!/^(?:valor(?:\s+total|\s+combinado)?|total(?:\s+combinado|\s+geral)?)\b/.test(normalized)) return null;
 
-  const match = String(line).match(/\b(?:valor(?:\s+total)?|total)\b\s*:?\s*(?:r\$\s*)?(\d{1,6}(?:[.,]\d{2})?)(?:\s*reais?)?/i);
+  const match = String(line).match(/\b(?:valor(?:\s+total|\s+combinado)?|total(?:\s+combinado|\s+geral)?)\b\s*:?\s*(?:r\$\s*)?(\d{1,6}(?:[.,]\d{2})?)(?:\s*reais?)?/i);
   return match ? parseMoneyToNumber(match[1]) : extractMoneyFromLine(line);
 }
 
@@ -855,7 +1143,7 @@ function inferDefaultItems(servicoContratado, extras, valorTotal) {
         descricao:
           servicoContratado && !isNotInformed(servicoContratado)
             ? servicoContratado
-            : "Serviço de recreação",
+            : "ServiÃ§o de recreaÃ§Ã£o",
         valor: valorTotal
       }
     ];
@@ -884,11 +1172,11 @@ function inferDefaultItems(servicoContratado, extras, valorTotal) {
 
 function extractQuantidadeCriancas(text) {
   const labeled = pickLooseByLabel(text, [
-    "quantidade de crianças",
+    "quantidade de crianÃ§as",
     "quantidade de criancas",
-    "número de crianças",
+    "nÃºmero de crianÃ§as",
     "numero de criancas",
-    "qtd crianças",
+    "qtd crianÃ§as",
     "qtd criancas",
     "qtd",
     "quantidade",
@@ -905,7 +1193,10 @@ function extractQuantidadeCriancas(text) {
   }
 
   const normalized = normalizeText(text);
-  let generic = normalized.match(/\b(\d{1,3})\s*a\s*(\d{1,3})\s+(?:crian.as?|convidados?|participantes?)\b/i);
+  let generic = normalized.match(/\bem\s+torno\s+de\s+(\d{1,3})\s+(?:crian.as?|convidados?|participantes?)\b/i);
+  if (generic) return generic[1];
+
+  generic = normalized.match(/\b(\d{1,3})\s*a\s*(\d{1,3})\s+(?:crian.as?|convidados?|participantes?)\b/i);
   if (generic) return `${generic[1]} a ${generic[2]}`;
 
   generic = normalized.match(/\b(\d{1,3})\s+(?:crian.as?|convidados?|participantes?)\b/i);
@@ -919,17 +1210,23 @@ function extractQuantidadeCriancas(text) {
 }
 
 function extractFaixaEtaria(detailsText) {
+  const info = pickByLabel(detailsText, ["informaÃ§Ãµes", "informacoes"]) || detailsText;
+  const aggregatedAges = extractAgeNumbersFromText(info);
+  const aggregatedRange = buildFaixaEtariaFromAges(aggregatedAges);
+  if (aggregatedRange) return aggregatedRange;
+
   const labeled = pickLooseByLabel(detailsText, [
-    "faixa etária",
+    "faixa etÃ¡ria",
     "faixa etaria",
     "idade"
   ]);
 
-  if (labeled) return normalizeFaixaEtaria(labeled);
+  if (labeled) {
+    const labeledAges = extractAgeNumbersFromText(labeled);
+    return buildFaixaEtariaFromAges(labeledAges) || normalizeFaixaEtaria(labeled);
+  }
 
-  const info = pickByLabel(detailsText, ["informações", "informacoes"]) || detailsText;
-
-  let match = info.match(/faixa\s+et[aá]ria\s*:?\s*([^.]+?)(?:\.|$)/i);
+  let match = info.match(/faixa\s+et[aÃ¡]ria\s*:?\s*([^.]+?)(?:\.|$)/i);
   if (match) return normalizeFaixaEtaria(match[1]);
 
   const infoWithoutFullDates = info
@@ -937,36 +1234,67 @@ function extractFaixaEtaria(detailsText) {
     .replace(/\b\d{1,3}\s*a\s*\d{1,3}\s+(?:crian.as?|convidados?|participantes?)\b/gi, " ")
     .replace(/\b\d{1,3}\s+(?:crian.as?|convidados?|participantes?)\b/gi, " ");
 
-  match = infoWithoutFullDates.match(/idade\s+entre\s+(\d{1,2})\s*a\s*(\d{1,2})(?:\s*anos?)?.*demais\s+de\s+(\d{1,2})\s*a\s*(\d{1,2})(?:\s*anos?)?/i);
-  if (match) return `${Number(match[1])} a ${Number(match[2])} anos e ${Number(match[3])} a ${Number(match[4])} anos`;
-
-  match = infoWithoutFullDates.match(/(?:faixa\s+et[aá]ria|idade)?\s*:?\s*(?:de\s*)?(\d{1,2})\s*(?:a|\/)\s*(\d{1,2})\s*anos?\b/i);
+  match = infoWithoutFullDates.match(/(?:faixa\s+et[aÃ¡]ria|idade)?\s*:?\s*(?:de\s*)?(\d{1,2})\s*(?:a|\/)\s*(\d{1,2})\s*anos?\b/i);
   if (match) return `${Number(match[1])} a ${Number(match[2])} anos`;
 
-  match = infoWithoutFullDates.match(/(?:faixa\s+et[aá]ria|idade)?\s*:?\s*(\d{1,2})\s*anos?\b/i);
+  match = infoWithoutFullDates.match(/(?:faixa\s+et[aÃ¡]ria|idade)?\s*:?\s*(\d{1,2})\s*anos?\b/i);
   if (match) return `${Number(match[1])} anos`;
 
   return NOT_INFORMED;
 }
 
 function extractAniversariante(detailsText) {
-  const labeled = pickByLabel(detailsText, ["aniversariante"]);
-  if (labeled) return titleCase(labeled);
+  const labeled = pickByLabel(detailsText, ["nome do aniversariante", "aniversariante"]);
+  if (labeled) {
+    return titleCase(
+      cleanExtractedValue(
+        String(labeled)
+          .replace(/^nome\s+do\s+aniversariante\s*:?\s*/i, "")
+          .replace(/^aniversariante\s*:?\s*/i, "")
+      )
+    );
+  }
 
-  const info = pickByLabel(detailsText, ["informações", "informacoes"]) || detailsText;
+  const info = pickByLabel(detailsText, ["informaÃ§Ãµes", "informacoes"]) || detailsText;
   const match = info.match(/aniversariante\s*:?\s*([^.]+?)(?:\.|$)/i);
-  if (match) return titleCase(match[1].trim());
+  if (match) {
+    return titleCase(
+      cleanExtractedValue(match[1].replace(/^nome\s+do\s+aniversariante\s*:?\s*/i, ""))
+    );
+  }
 
   return NOT_INFORMED;
 }
 
 function extractTema(detailsText) {
   const labeled = pickByLabel(detailsText, ["tema"]);
-  if (labeled) return titleCase(labeled);
+  if (labeled) return normalizeKnownTheme(cleanThemeValue(labeled));
 
-  const info = pickByLabel(detailsText, ["informações", "informacoes"]) || detailsText;
-  const match = info.match(/tema\s*:?\s*([^.]+?)(?:\.|$)/i);
-  if (match) return titleCase(match[1].trim());
+  const info = pickByLabel(detailsText, ["informaÃ§Ãµes", "informacoes"]) || detailsText;
+  let match = info.match(/tema(?:\s+da\s+festa)?\s*:?\s*([^\n\r.]+)/i);
+  if (match) return normalizeKnownTheme(cleanThemeValue(match[1]));
+
+  for (const line of splitLines(info)) {
+    const parts = line
+      .split(",")
+      .map((part) => cleanExtractedValue(part))
+      .filter(Boolean);
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!/\b\d{1,2}\s*anos?\b/i.test(parts[i])) continue;
+      const candidate = parts[i + 1];
+      const normalizedCandidate = normalizeText(candidate);
+      if (
+        candidate &&
+        !normalizedCandidate.includes("vai chegar") &&
+        !normalizedCandidate.includes("parabens") &&
+        !normalizedCandidate.includes("parabÃ©ns") &&
+        normalizedCandidate.split(" ").length <= 4
+      ) {
+        return normalizeKnownTheme(candidate);
+      }
+    }
+  }
 
   return NOT_INFORMED;
 }
@@ -974,11 +1302,20 @@ function extractTema(detailsText) {
 function extractEspaco(detailsText) {
   const labeled = pickByLabel(detailsText, SPACE_LABELS);
 
-  if (labeled) return labeled;
+  if (labeled) return cleanEspacoValue(labeled);
 
-  const info = pickByLabel(detailsText, ["informações", "informacoes"]) || detailsText;
-  const match = info.match(/espa[çc]o\s*:?\s*([^.]+?)(?:\.|$)/i);
-  if (match) return match[1].trim();
+  const info = pickByLabel(detailsText, ["informaÃ§Ãµes", "informacoes"]) || detailsText;
+  const match = info.match(/espa[Ã§c]o\s*:?\s*([^.]+?)(?:\.|$)/i);
+  if (match) return cleanEspacoValue(match[1]);
+
+  if (/local\s+com\s+espa/i.test(info)) {
+    const localMatch = info.match(/(local\s+com\s+espa[^\n\r]+)/i);
+    if (localMatch) return cleanEspacoValue(localMatch[1]);
+  }
+
+  if (/sal[aÃ£]o de festa do condom/i.test(info)) {
+    return "Salao de festa do condominio";
+  }
 
   return extractSpaceCandidate(detailsText) || NOT_INFORMED;
 }
@@ -1010,8 +1347,8 @@ function normalizeServico(value) {
 
   return String(value)
     .replace(/recriador/gi, "recreador")
-    .replace(/recriação/gi, "recreação")
-    .replace(/recriacao/gi, "recreação");
+    .replace(/recriaÃ§Ã£o/gi, "recreaÃ§Ã£o")
+    .replace(/recriacao/gi, "recreaÃ§Ã£o");
 }
 
 function stripServiceQuestionPrefix(value) {
@@ -1068,9 +1405,10 @@ function extractValores(valuesText, servicoContratado, extras) {
   const entradaLine = findLineStartingWith(lines, "entrada");
   const saldoLine = findLineStartingWith(lines, "saldo");
 
-  const valorTotal = extractTotalMoneyFromLine(valorTotalLine) || 0;
-  const entrada = extractMoneyFromLine(entradaLine) || (valorTotal > 0 ? valorTotal / 2 : 0);
-  const saldo = extractMoneyFromLine(saldoLine) || (valorTotal > 0 ? valorTotal / 2 : 0);
+  const serviceMoneyItems = extractServiceMoneyItems(valuesText);
+  let valorTotal = extractTotalMoneyFromLine(valorTotalLine) || 0;
+  let entrada = extractMoneyFromLine(entradaLine) || 0;
+  let saldo = extractMoneyFromLine(saldoLine) || 0;
 
   let itensValores = [];
 
@@ -1083,32 +1421,37 @@ function extractValores(valuesText, servicoContratado, extras) {
       const line = lines[i];
 
       if (!line.trim()) continue;
-
-      if (isValueSummaryLine(line)) {
-        break;
-      }
+      if (isValueSummaryLine(line)) break;
 
       const valor = extractMoneyFromLine(line);
       if (valor === null) continue;
 
       let descricao = line
         .replace(/r\$\s*[\d\.\,]+/i, "")
-        .replace(/[–—-]+/g, " ")
+        .replace(/[â€“â€”-]+/g, " ")
         .trim();
 
       if (!descricao) {
         descricao =
           servicoContratado && !isNotInformed(servicoContratado)
             ? servicoContratado
-            : "Serviço de recreação";
+            : "ServiÃ§o de recreaÃ§Ã£o";
       }
 
-      itensValores.push({
-        descricao,
-        valor
-      });
+      itensValores.push({ descricao, valor });
     }
   }
+
+  if (!itensValores.length && serviceMoneyItems.length) {
+    itensValores = serviceMoneyItems;
+  }
+
+  if (!valorTotal && itensValores.length) {
+    valorTotal = itensValores.reduce((sum, item) => sum + item.valor, 0);
+  }
+
+  if (!entrada && valorTotal) entrada = valorTotal / 2;
+  if (!saldo && valorTotal) saldo = valorTotal / 2;
 
   if (!itensValores.length) {
     itensValores = inferDefaultItems(servicoContratado, extras, valorTotal);
@@ -1130,6 +1473,40 @@ function hasStructuredSections(text) {
   );
 }
 
+const LOOSE_NAME_FORBIDDEN_LABELS = [
+  "valor",
+  "valor total",
+  "total",
+  "local",
+  "data",
+  "horario",
+  "horário",
+  "servico",
+  "serviço",
+  "servico contratado",
+  "serviço contratado",
+  "extras",
+  "entrada",
+  "saldo",
+  "informacoes",
+  "informações",
+  "dados do evento"
+];
+
+function isForbiddenLooseNameValue(value) {
+  const normalized = normalizeText(cleanExtractedValue(value)).replace(/[:\s]+$/g, "").trim();
+  if (!normalized) return true;
+
+  return LOOSE_NAME_FORBIDDEN_LABELS.some((label) => {
+    const normalizedLabel = normalizeText(label);
+    return (
+      normalized === normalizedLabel ||
+      normalized.startsWith(`${normalizedLabel}:`) ||
+      normalized.startsWith(`${normalizedLabel} `)
+    );
+  });
+}
+
 function extractLooseName(text) {
   const lines = splitLines(text);
 
@@ -1140,7 +1517,7 @@ function extractLooseName(text) {
       "cliente"
     ]) || "";
 
-  if (labeled) return titleCase(labeled);
+  if (labeled && !isForbiddenLooseNameValue(labeled)) return titleCase(labeled);
 
   for (const line of lines) {
     const cleaned = cleanExtractedValue(line);
@@ -1148,18 +1525,19 @@ function extractLooseName(text) {
 
     if (
       isUsefulLooseValue(cleaned) &&
+      !isForbiddenLooseNameValue(cleaned) &&
       !normalized.includes("local") &&
       !normalized.includes("data") &&
       !normalized.includes("horario") &&
-      !normalized.includes("horário") &&
+      !normalized.includes("horÃ¡rio") &&
       !normalized.includes("servico") &&
-      !normalized.includes("serviço") &&
+      !normalized.includes("serviÃ§o") &&
       !normalized.includes("tema") &&
       !normalized.includes("aniversariante") &&
       !normalized.includes("criancas") &&
-      !normalized.includes("crianças") &&
+      !normalized.includes("crianÃ§as") &&
       !normalized.includes("faixa etaria") &&
-      !normalized.includes("faixa etária") &&
+      !normalized.includes("faixa etÃ¡ria") &&
       !normalized.includes("extras") &&
       !normalized.includes("r$")
     ) {
@@ -1172,7 +1550,7 @@ function extractLooseName(text) {
   return NOT_INFORMED;
 }
 
-/** Linha cujo rótulo é campo de espaço (evita confundir com serviço por conter "recreação"). */
+/** Linha cujo rÃ³tulo Ã© campo de espaÃ§o (evita confundir com serviÃ§o por conter "recreaÃ§Ã£o"). */
 function lineLooksLikeSpaceField(line) {
   const currentNormalized = normalizeText(stripLineDecorations(line));
   for (const label of SPACE_LABELS) {
@@ -1192,30 +1570,38 @@ function lineLooksLikeSpaceField(line) {
 function extractLooseLocal(text) {
   const lines = splitLines(text);
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = cleanExtractedValue(lines[i]);
+    const normalized = normalizeText(line);
+    const inlineMatch = line.match(/^(?:endere[cç]o(?:\s+da\s+festa)?|local(?:\s+da\s+festa(?:\s+e\s+ponto\s+de\s+refer[eê]ncia)?)?)\s*:?\s*(.*)$/i);
+
+    if (inlineMatch) {
+      const seed = cleanExtractedValue(inlineMatch[1] || "");
+      const collected = collectLooseLocalParts(lines, i + 1, seed && normalizeText(seed) !== "da festa" ? seed : "");
+      if (collected) return collected;
+    }
+
     const inlineLocal = getLooseInlineValueByLabel(line, LOCAL_LABELS) || getInlineValueByLabel(line, LOCAL_LABELS);
-    if (inlineLocal && isUsefulLooseValue(inlineLocal)) return inlineLocal;
+    if (inlineLocal && isUsefulLooseValue(inlineLocal) && normalizeText(inlineLocal) !== "da festa") {
+      const collected = collectLooseLocalParts(lines, i + 1, inlineLocal);
+      if (collected) return collected;
+    }
+
+    if (LOCAL_LABELS.some((label) => normalized === normalizeText(label) || normalized === `${normalizeText(label)}:`)) {
+      const collected = collectLooseLocalParts(lines, i + 1);
+      if (collected) return collected;
+    }
   }
 
   const labeled = pickLooseByLabel(text, LOCAL_LABELS) || "";
+  if (labeled && normalizeText(labeled) !== "da festa") return formatLooseLocalValue(cleanLooseLocalValue(labeled));
 
-  if (labeled) return cleanLooseLocalValue(labeled);
+  for (let i = 0; i < lines.length; i++) {
+    const cleaned = cleanExtractedValue(lines[i]);
+    if (!lineLooksLikeLocal(cleaned)) continue;
 
-  for (const line of lines) {
-    const cleaned = cleanExtractedValue(line);
-    const normalized = normalizeText(cleaned);
-
-    if (
-      normalized.includes("rua ") ||
-      normalized.includes("avenida ") ||
-      normalized.includes("av. ") ||
-      normalized.includes("travessa ") ||
-      normalized.includes("estrada ") ||
-      normalized.includes("condominio ") ||
-      normalized.includes("condomínio ")
-    ) {
-      return cleaned;
-    }
+    const collected = collectLooseLocalParts(lines, i + 1, cleaned);
+    if (collected) return collected;
   }
 
   return NOT_INFORMED;
@@ -1226,6 +1612,24 @@ function extractLooseService(text) {
     pickLooseByLabel(text, SERVICE_LABELS) || "";
 
   if (labeled) return cleanServico(labeled);
+
+  const isHorarioNarrative = (normalized) =>
+    normalized.includes("convite") ||
+    normalized.includes("convidados") ||
+    normalized.includes("recreacao comeca") ||
+    normalized.includes("recreadores comecam") ||
+    normalized.includes("equipe comeca") ||
+    normalized.includes("inicio da recreacao");
+
+  for (const line of splitLines(text)) {
+    const cleaned = cleanExtractedValue(line);
+    const normalized = normalizeText(cleaned);
+    if (isHorarioNarrative(normalized)) continue;
+    if (/^\d{1,2}\s+recreadores?$/i.test(normalized)) return cleaned;
+    if (extractTrailingMoneyValue(cleaned) === null) continue;
+    if (normalized.includes("pool party completo")) return "Pool Party Completo";
+    if (normalized.includes("pool party")) return "Pool Party";
+  }
 
   const lines = splitLines(text);
   for (let i = 0; i < lines.length; i++) {
@@ -1238,6 +1642,7 @@ function extractLooseService(text) {
         const nextNormalized = normalizeText(next);
 
         if (!isUsefulLooseValue(next)) continue;
+        if (isHorarioNarrative(nextNormalized)) continue;
         if (extractIsolatedMoneyValue(next) !== null || extractTrailingMoneyValue(next) !== null) break;
         if (nextNormalized.startsWith("valor") || nextNormalized.startsWith("total")) break;
         if (isFormLabelLine(next)) break;
@@ -1253,6 +1658,7 @@ function extractLooseService(text) {
 
     const cleaned = cleanExtractedValue(line);
     const normalized = normalizeText(cleaned);
+    if (isHorarioNarrative(normalized)) continue;
     if (
       isUsefulLooseValue(cleaned) &&
       !normalized.includes("detalhes que") &&
@@ -1264,7 +1670,10 @@ function extractLooseService(text) {
         normalized.includes("contratado") ||
         normalized.includes("recreador") ||
         normalized.includes("recreacao") ||
-        normalized.includes("recreação")
+        normalized.includes("recreaÃ§Ã£o") ||
+        normalized.includes("pool party") ||
+        normalized.includes("personagem") ||
+        normalized.includes("promotor")
       )
     ) {
       const service = cleanServico(cleaned);
@@ -1289,15 +1698,41 @@ function extractLooseData(text) {
 }
 
 function extractLooseHorario(text) {
+  for (const line of splitLines(text)) {
+    const cleaned = cleanExtractedValue(line);
+    const normalized = normalizeText(cleaned);
+    const compacted = normalized.replace(/[^a-z0-9]+/g, " ");
+    const times = extractTimes(cleaned);
+
+    if (!times.length) continue;
+
+    if (
+      /recreadores?\s+comec/.test(compacted) ||
+      /recreacao\s+comec/.test(compacted) ||
+      /equipe\s+comec/.test(compacted) ||
+      /inicio\s+da\s+recreacao/.test(compacted) ||
+      /recreadores?\s+as\b/.test(compacted)
+    ) {
+      return buildHorarioValues(times[times.length - 1]);
+    }
+
+    const explicitRange = extractExplicitTimeRange(cleaned);
+    if (explicitRange) {
+      return buildHorarioValues(explicitRange.inicio, explicitRange.fim);
+    }
+  }
+
   const labeled =
     pickLooseByLabel(text, [
-      "horário",
+      "horÃ¡rio",
       "horario",
-      "horário do evento",
+      "horÃ¡rio do evento",
       "horario do evento",
-      "horário que inicia",
+      "horÃ¡rio da recreaÃ§Ã£o",
+      "horario da recreacao",
+      "horÃ¡rio que inicia",
       "horario que inicia",
-      "início",
+      "inÃ­cio",
       "inicio"
     ]) || "";
 
@@ -1311,7 +1746,7 @@ function extractLooseTemaAniversarianteEspaco(text) {
   for (const line of lines) {
     const cleaned = cleanExtractedValue(line);
     const match = cleaned.match(
-      /\btema\s*:?\s*([^\n\r.;]+?)\s*[-–—]\s*([^\n\r.;-]*?\b\d{1,2}\s*anos?)\s*[-–—]\s*espa\S*o\s*:?\s*([^\n\r.;]+)/iu
+      /\btema\s*:?\s*([^\n\r.;]+?)\s*[-â€“â€”]\s*([^\n\r.;-]*?\b\d{1,2}\s*anos?)\s*[-â€“â€”]\s*espa\S*o\s*:?\s*([^\n\r.;]+)/iu
     );
 
     if (!match) continue;
@@ -1328,20 +1763,89 @@ function extractLooseTemaAniversarianteEspaco(text) {
 
 function extractLooseTema(text) {
   const labeled = pickLooseByLabel(text, ["tema"]);
-  if (labeled) return titleCase(labeled);
+  if (labeled) return normalizeKnownTheme(cleanThemeValue(labeled));
 
-  const match = text.match(/tema\s*:?\s*([^\n\r.]+)/i);
-  if (match && isUsefulLooseValue(match[1])) return titleCase(match[1]);
+  let match = text.match(/tema(?:\s+da\s+festa)?\s*:?\s*([^\n\r.]+)/i);
+  if (match && isUsefulLooseValue(match[1])) return normalizeKnownTheme(cleanThemeValue(match[1]));
+
+  match = text.match(/festa\s+(?:sera|ser[aá]|de)\s+de\s*([^\n\r(.,]+)/i);
+  if (match && isUsefulLooseValue(match[1])) return normalizeKnownTheme(match[1]);
+
+  for (const line of splitLines(text)) {
+    const parts = line
+      .split(",")
+      .map((part) => cleanExtractedValue(part))
+      .filter(Boolean);
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!/\b\d{1,2}\s*anos?\b/i.test(parts[i])) continue;
+      const candidate = parts[i + 1];
+      if (!candidate) continue;
+
+      const normalizedCandidate = normalizeText(candidate);
+      if (
+        !normalizedCandidate.includes("vai chegar") &&
+        !normalizedCandidate.includes("parabens") &&
+        !normalizedCandidate.includes("parabÃ©ns") &&
+        normalizedCandidate.split(" ").length <= 4
+      ) {
+        return normalizeKnownTheme(candidate);
+      }
+    }
+  }
 
   return NOT_INFORMED;
 }
 
 function extractLooseAniversariante(text) {
-  const labeled = pickLooseByLabel(text, ["aniversariante"]);
-  if (labeled) return titleCase(labeled);
+  const labeled = pickLooseByLabel(text, ["nome do aniversariante", "aniversariante"]);
+  if (labeled) {
+    return titleCase(
+      cleanExtractedValue(
+        String(labeled)
+          .replace(/^nome\s+do\s+aniversariante\s*:?\s*/i, '')
+          .replace(/^aniversariante\s*:?\s*/i, '')
+      )
+    );
+  }
 
-  const match = text.match(/aniversariante\s*:?\s*([^\n\r.]+)/i);
-  if (match && isUsefulLooseValue(match[1])) return titleCase(match[1]);
+  const split = splitLines(text);
+  for (let index = 0; index < split.length; index++) {
+    const line = split[index];
+    const cleaned = cleanExtractedValue(line);
+    const normalized = normalizeText(cleaned);
+
+    if (normalized.startsWith("nome dele") || normalized.startsWith("nome dela") || normalized.startsWith("nome do aniversariante")) {
+      const candidate = cleaned
+        .replace(/^nome\s+dele\s*(?:é|e)?\s*/i, '')
+        .replace(/^nome\s+dela\s*(?:é|e)?\s*/i, '')
+        .replace(/^nome\s+do\s+aniversariante\s*:?\s*/i, '')
+        .trim();
+      if (candidate) return titleCase(candidate);
+    }
+
+    const previous = normalizeText(split[index - 1] || "");
+    const currentWithoutNotes = cleaned.replace(/\([^)]*\)/g, "").trim();
+    if (
+      currentWithoutNotes &&
+      /^\p{L}+(?:\s+\p{L}+){1,3}$/u.test(currentWithoutNotes) &&
+      (previous.includes("anos") || previous.includes("criancas") || previous.includes("crianças")) &&
+      !normalized.includes("recreador") &&
+      !normalized.includes("valor") &&
+      !normalized.includes("rua ") &&
+      !normalized.includes("avenida ") &&
+      !normalized.includes("tema")
+    ) {
+      return titleCase(currentWithoutNotes);
+    }
+  }
+
+  let match = text.match(/aniversariante\s*:?\s*([^\n\r.]+)/i);
+  if (match && isUsefulLooseValue(match[1])) {
+    return titleCase(
+      cleanExtractedValue(match[1].replace(/^nome\s+do\s+aniversariante\s*:?\s*/i, ''))
+    );
+  }
 
   const lines = splitLines(text);
   for (const line of lines) {
@@ -1366,9 +1870,39 @@ function extractLooseAniversariante(text) {
 }
 
 function extractLooseEspaco(text) {
-  const labeled = pickLooseByLabel(text, SPACE_LABELS);
+  const wholeTextMatch = String(text).match(/(?:espa[cç]o\s+da\s+recrea[cç][aã]o|[áa]rea\s+da\s+recrea[cç][aã]o)\s*:?\s*([^\n\r]+)/i);
+  if (wholeTextMatch && isUsefulLooseValue(wholeTextMatch[1])) {
+    return cleanEspacoValue(wholeTextMatch[1]);
+  }
 
-  if (labeled) return labeled;
+  for (const line of splitLines(text)) {
+    const cleaned = cleanExtractedValue(line);
+    const normalized = normalizeText(cleaned);
+    const explicitMatch = cleaned.match(/^(?:espa[cç]o\s+da\s+recrea[cç][aã]o|[áa]rea\s+da\s+recrea[cç][aã]o)\s*:?\s*(.+)$/i);
+
+    if (explicitMatch && isUsefulLooseValue(explicitMatch[1])) {
+      return cleanEspacoValue(explicitMatch[1]);
+    }
+
+    if (normalized.startsWith("local com ")) {
+      return cleanEspacoValue(cleaned);
+    }
+
+    if (normalized.startsWith("espaco ") || normalized.startsWith("espaço ")) {
+      const withoutNotes = cleaned.replace(/\(([^)]+)\)/g, "").trim();
+      if (/[,\-]/.test(withoutNotes) || /\b\d{1,2}\s*(?:crianc|anos?)\b/i.test(withoutNotes) || /\btema\b|\baniversariante\b|\bparabens\b/i.test(normalized)) {
+        return cleanEspacoValue(withoutNotes);
+      }
+      return titleCase(withoutNotes);
+    }
+  }
+
+  const labeled = pickLooseByLabel(text, SPACE_LABELS);
+  if (labeled) return cleanEspacoValue(labeled);
+
+  if (/sal[aÃ£]o de festa do condom/i.test(text)) {
+    return "Salão de festa do condomínio";
+  }
 
   return extractSpaceCandidate(text) || NOT_INFORMED;
 }
@@ -1430,12 +1964,12 @@ function removeDuplicateEspacoFromInformacoes(informacoes, espaco) {
   const espacoPattern = escapeRegExp(String(espaco).trim()).replace(/\s+/g, "\\s+");
   const cleaned = String(informacoes)
     .replace(
-      new RegExp(`(?:\\s*[-–—,.;:]\\s*)?\\bespa\\S*o(?:\\s+da\\s+recrea\\S*o)?\\s*[:\\-]?\\s*${espacoPattern}\\b`, "iu"),
+      new RegExp(`(?:\\s*[-â€“â€”,.;:]\\s*)?\\bespa\\S*o(?:\\s+da\\s+recrea\\S*o)?\\s*[:\\-]?\\s*${espacoPattern}\\b`, "iu"),
       ""
     )
     .replace(/\s+([.,;:])/g, "$1")
     .replace(/\s{2,}/g, " ")
-    .replace(/\s*[-–—]\s*$/g, "")
+    .replace(/\s*[-â€“â€”]\s*$/g, "")
     .trim();
 
   return cleanExtractedValue(cleaned);
@@ -1445,6 +1979,9 @@ function extractLooseValues(text, servicoContratado, extras) {
   const lines = splitLines(text);
   const valorTotalLine =
     findLineStartingWith(lines, "valor total") ||
+    findLineStartingWith(lines, "valor combinado") ||
+    findLineStartingWith(lines, "total combinado") ||
+    findLineStartingWith(lines, "total geral") ||
     findLineStartingWith(lines, "valor") ||
     findLineStartingWith(lines, "total");
   const entradaLine = findLineStartingWith(lines, "entrada");
@@ -1453,6 +1990,12 @@ function extractLooseValues(text, servicoContratado, extras) {
   let valorTotal = extractTotalMoneyFromLine(valorTotalLine) || 0;
   let entrada = extractMoneyFromLine(entradaLine) || 0;
   let saldo = extractMoneyFromLine(saldoLine) || 0;
+  const serviceMoneyItems = extractServiceMoneyItems(text);
+  const serviceMoneySum = serviceMoneyItems.reduce((sum, item) => sum + item.valor, 0);
+
+  if (!valorTotal && serviceMoneySum > 0) {
+    valorTotal = serviceMoneySum;
+  }
 
   if (!valorTotal) {
     for (const line of lines) {
@@ -1472,7 +2015,7 @@ function extractLooseValues(text, servicoContratado, extras) {
         .filter((n) => n !== null);
 
       if (values.length > 0) {
-        valorTotal = Math.max(...values);
+        valorTotal = values.reduce((sum, value) => sum + value, 0);
       }
     }
   }
@@ -1501,7 +2044,7 @@ function extractLooseValues(text, servicoContratado, extras) {
   if (!entrada && valorTotal) entrada = valorTotal / 2;
   if (!saldo && valorTotal) saldo = valorTotal / 2;
 
-  const itens = inferDefaultItems(servicoContratado, extras, valorTotal);
+  const itens = serviceMoneyItems.length ? serviceMoneyItems : inferDefaultItems(servicoContratado, extras, valorTotal);
 
   return {
     itens_valores: itens,
@@ -1517,28 +2060,44 @@ function parseLooseContractText(text) {
   const looseText = sanitizeLooseText(normalizedLooseText) || normalizedLooseText;
 
   const nomeContratante = extractLooseName(looseText);
-  const local = extractLooseLocal(looseText);
+  const local = extractLooseLocal(normalizedLooseText);
   const dataEvento = extractLooseData(looseText);
   const diaSemana = calculateWeekday(dataEvento);
 
   const horario = extractLooseHorario(looseText);
 
   const temaAniversarianteEspaco = extractLooseTemaAniversarianteEspaco(looseText);
-  const qtdCriancas = emptyIfNotInformed(extractQuantidadeCriancas(looseText));
-  const faixaEtaria = emptyIfNotInformed(extractFaixaEtaria(looseText));
+  const qtdCriancas = emptyIfNotInformed(extractQuantidadeCriancas(normalizedLooseText));
+  const faixaEtaria = emptyIfNotInformed(extractFaixaEtaria(normalizedLooseText));
   const aniversariante = emptyIfNotInformed(
     temaAniversarianteEspaco.aniversariante || extractLooseAniversariante(looseText)
   );
   const tema = emptyIfNotInformed(temaAniversarianteEspaco.tema || extractLooseTema(looseText));
   const espaco = emptyIfNotInformed(temaAniversarianteEspaco.espaco || extractLooseEspaco(looseText));
   const servicoContratado = extractLooseService(looseText);
-  const extras = extractExtras(looseText);
+  const extrasBase = extractExtras(looseText);
   const informacoes = removeDuplicateEspacoFromInformacoes(
     extractLooseInformacoes(normalizedLooseText, looseText),
     espaco
   );
 
-  const valores = extractLooseValues(looseText, servicoContratado, extras);
+  const valores = extractLooseValues(looseText, servicoContratado, extrasBase);
+  const extras = extrasBase === NO_EXTRAS
+    ? [...new Set((valores.itens_valores || [])
+        .map((item) => cleanExtractedValue(item?.descricao || ""))
+        .filter((descricao) => {
+          const normalizedDescricao = normalizeText(descricao);
+          return (
+            descricao &&
+            normalizedDescricao &&
+            normalizedDescricao !== normalizeText(servicoContratado) &&
+            !normalizedDescricao.includes("recreador") &&
+            !normalizedDescricao.includes("recreacao") &&
+            !normalizedDescricao.includes("pool party") &&
+            !normalizedDescricao.includes("promotor")
+          );
+        }))].join(", ") || NO_EXTRAS
+    : extrasBase;
 
   return buildParsedResponse({
     nome_contratante: nomeContratante,
@@ -1580,7 +2139,7 @@ function parseContractText(text) {
     NOT_INFORMED;
 
   const local =
-    pickByLabel(dadosEventoSection, ["local", "endereço", "endereco"]) ||
+    pickByLabel(dadosEventoSection, ["local", "endereÃ§o", "endereco"]) ||
     NOT_INFORMED;
 
   const dataEventoRaw =
@@ -1592,7 +2151,7 @@ function parseContractText(text) {
   const diaSemana = calculateWeekday(dataEvento);
 
   const horarioRaw =
-    pickByLabel(dadosEventoSection, ["horário", "horario"]) ||
+    pickByLabel(dadosEventoSection, ["horÃ¡rio", "horario"]) ||
     "";
 
   const horario = buildHorarioFromSource(horarioRaw);
@@ -1638,3 +2197,10 @@ function parseContractText(text) {
 module.exports = {
   parseContractText
 };
+
+
+
+
+
+
+

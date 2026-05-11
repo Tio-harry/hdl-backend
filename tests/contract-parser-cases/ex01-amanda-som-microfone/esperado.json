@@ -1,0 +1,17 @@
+﻿{
+  "nome_contratante": "Amanda Rocha Carneiro da Cunha",
+  "local": "Rua Conselheiro Nabuco, 360, Casa Amarela, próximo ao Atacadão",
+  "data_evento": "29/08/2026",
+  "horario_inicio": "16:00",
+  "horario_fim": "19:00",
+  "horario_chegada": "15:40",
+  "qtd_criancas": "13",
+  "faixa_etaria": "4 anos",
+  "tema": "Homem-Aranha",
+  "espaco": "Espaço pequeno",
+  "servico_contratado": "01 Recreador com brincadeiras, pintura na pele e parabéns animado",
+  "extras": "Som e Microfone",
+  "valor_total": 430,
+  "entrada": 215,
+  "saldo": 215
+}

@@ -1,0 +1,15 @@
+﻿{
+  "nome_contratante": "Isabel Cristina Mello Silva",
+  "local": "Rua Afonso Pena, 155, Sapiranga",
+  "data_evento": "11/07/2026",
+  "horario_inicio": "16:30",
+  "horario_fim": "19:30",
+  "horario_chegada": "16:10",
+  "qtd_criancas": "10",
+  "faixa_etaria": "1 a 3 anos",
+  "servico_contratado": "01 Recreador com brincadeiras, pintura na pele e parabéns animado",
+  "extras": "Escultura em balões",
+  "valor_total": 345,
+  "entrada": 172.5,
+  "saldo": 172.5
+}

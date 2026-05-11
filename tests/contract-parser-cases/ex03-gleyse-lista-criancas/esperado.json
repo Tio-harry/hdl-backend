@@ -1,0 +1,18 @@
+﻿{
+  "nome_contratante": "Gleyse Kelly da Silva",
+  "local": "Salão de festa no condomínio Mirante do Recife, Avenida Doutor José Rufino, 2887, Barro, Recife-PE",
+  "data_evento": "03/05/2026",
+  "horario_inicio": "14:00",
+  "horario_fim": "17:00",
+  "horario_chegada": "13:40",
+  "qtd_criancas": "15",
+  "faixa_etaria": "2 a 10 anos",
+  "aniversariante": "Pedro",
+  "tema": "Carrinhos",
+  "espaco": "Salão de festa do condomínio",
+  "servico_contratado": "01 Recreador com brincadeiras, pintura na pele e parabéns animado",
+  "extras": "Escultura em balões",
+  "valor_total": 345,
+  "entrada": 172.5,
+  "saldo": 172.5
+}
