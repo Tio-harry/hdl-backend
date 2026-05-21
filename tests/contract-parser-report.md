@@ -1,11 +1,11 @@
 # Relatório de testes do parser sem IA
 
-Gerado em: 11/05/2026, 08:53:59
+Gerado em: 21/05/2026, 11:59:09
 
 ## Resumo final
 
-- Total de casos: 7
-- Quantidade OK: 7
+- Total de casos: 8
+- Quantidade OK: 8
 - Quantidade com falha: 0
 
 ### Campos que mais falharam
@@ -161,6 +161,29 @@ Gerado em: 11/05/2026, 08:53:59
   - horario_inicio
   - horario_fim
   - horario_chegada
+  - servico_contratado
+  - extras
+  - valor_total
+  - entrada
+  - saldo
+- Campos com erro:
+  - Nenhum
+
+## ex08-isabela-local-com-acentos
+
+- Status geral: **OK**
+- Campos comparados: nome_contratante, local, data_evento, horario_inicio, horario_fim, horario_chegada, qtd_criancas, faixa_etaria, aniversariante, tema, servico_contratado, extras, valor_total, entrada, saldo
+- Campos OK:
+  - nome_contratante
+  - local
+  - data_evento
+  - horario_inicio
+  - horario_fim
+  - horario_chegada
+  - qtd_criancas
+  - faixa_etaria
+  - aniversariante
+  - tema
   - servico_contratado
   - extras
   - valor_total

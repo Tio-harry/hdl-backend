@@ -441,16 +441,19 @@ function formatLooseLocalValue(value) {
     .replace(/(\d{1,4})\s+([A-ZÀ-Ý]{3,})(\s*)$/u, "$1, $2$3");
 
   current = current
-    .replace(/\bcep\b\s*(\d{5}-\d{3})/i, "CEP $1")
+    .replace(/\.\s*cep\s*:?\s*(\d{5}-\d{3})\.?/i, ", CEP $1")
+    .replace(/\bcep\b\s*:?\s*(\d{5}-\d{3})/i, "CEP $1")
     .replace(/,\s*Casa\s+([^,]+?)\s*,?\s*CEP\s*(\d{5}-\d{3})/i, (_, bairro, cep) => `, casa, ${titleCase(bairro)}, CEP ${cep}`)
     .replace(/\s+-\s+CEP\s*(\d{5}-\d{3})/i, ", CEP $1")
     .replace(/\s*-\s*,\s*CEP\s*(\d{5}-\d{3})/i, ", CEP $1")
-    .replace(/\s*-\s*(?=CEP\s*\d{5}-\d{3})/i, ", ");
+    .replace(/\s*-\s*(?=CEP\s*\d{5}-\d{3})/i, ", ")
+    .replace(/,\s*(\d{1,4})\s+(.+?)\s+([A-ZÀ-Ý]{2,})\s*-\s*([A-Z]{2})\b/u, (_, numero, bairro, cidade, uf) => `, ${numero}, ${bairro.trim()}, ${cidade}-${uf}`);
 
   current = normalizeLooseListSeparator(current)
     .replace(/\s+,/g, ",")
     .replace(/,+/g, ",")
     .replace(/,\s*,/g, ", ")
+    .replace(/,\s*([A-ZÀ-Ý]{2,})\s+([A-Z]{2})\b/u, ", $1-$2")
     .replace(/^\s*,\s*/, "")
     .trim();
 
@@ -558,6 +561,11 @@ function extractAgeNumbersFromText(text) {
 
   const rangeRegex = /(\d{1,2})\s*(?:a|\/)\s*(\d{1,2})\s*anos?\b/gi;
   while ((match = rangeRegex.exec(source))) {
+    ages.push(Number(match[1]), Number(match[2]));
+  }
+
+  const compactRangeRegex = /\((\d{1,2})\s*-\s*(\d{1,2})\)/gi;
+  while ((match = compactRangeRegex.exec(source))) {
     ages.push(Number(match[1]), Number(match[2]));
   }
 
