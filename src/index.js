@@ -2406,6 +2406,192 @@ app.get('/colaboradores', async (req, res) => {
   }
 });
 
+app.get(
+  '/colaboradores/:colaboradorId/pagamentos-pendentes',
+  requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_COLABORADOR_VIEW),
+  async (req, res) => {
+    try {
+      await ensureColaboradoresTable();
+      await ensureEscalaEventosTable();
+
+      const colaboradorId = String(req.params.colaboradorId || '').trim();
+      const eventoAtualId = String(req.query.eventoAtualId || '').trim();
+      if (!colaboradorId) {
+        return res.status(400).json({ ok: false, erro: 'colaboradorId nao informado' });
+      }
+
+      const colab = await pool.query('SELECT id FROM colaboradores WHERE id = $1', [colaboradorId]);
+      if (!colab.rowCount) {
+        return res.status(404).json({ ok: false, erro: 'Colaborador nao encontrado' });
+      }
+
+      const result = await pool.query(
+        `
+        WITH pendencias AS (
+          SELECT
+            esc.id AS escala_evento_id,
+            esc.evento_id,
+            ev.data_evento,
+            ev.hora_inicio,
+            ev.hora_fim,
+            ev.contratante_nome,
+            esc.funcao,
+            esc.valor_recreador,
+            esc.status_pagamento,
+            CASE
+              WHEN ev.data_evento ~ '^\\d{2}/\\d{2}/\\d{4}$'
+              THEN to_date(ev.data_evento, 'DD/MM/YYYY')
+              ELSE NULL
+            END AS data_evento_date
+          FROM escala_eventos esc
+          INNER JOIN eventos ev ON ev.id = esc.evento_id
+          WHERE esc.colaborador_id = $1
+        )
+        SELECT
+          escala_evento_id,
+          evento_id,
+          data_evento,
+          hora_inicio,
+          hora_fim,
+          contratante_nome,
+          funcao,
+          valor_recreador,
+          status_pagamento,
+          CASE WHEN $2::text <> '' AND evento_id = $2::text THEN true ELSE false END AS is_evento_atual
+        FROM pendencias
+        WHERE data_evento_date IS NOT NULL
+          AND data_evento_date <= CURRENT_DATE
+          AND LOWER(TRIM(COALESCE(status_pagamento, ''))) <> 'pago'
+          AND COALESCE(valor_recreador, 0) > 0
+        ORDER BY data_evento_date DESC, hora_inicio DESC NULLS LAST, evento_id DESC
+        `,
+        [colaboradorId, eventoAtualId]
+      );
+
+      res.json({ ok: true, dados: result.rows });
+    } catch (error) {
+      res.status(500).json({ ok: false, erro: error.message });
+    }
+  }
+);
+
+app.patch(
+  '/escalas-evento/pagamento-lote',
+  requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_VIEW),
+  async (req, res) => {
+    const client = await pool.connect();
+    try {
+      await ensureColaboradoresTable();
+      await ensureEscalaEventosTable();
+
+      const colaboradorId = String(req.body?.colaborador_id || '').trim();
+      const rawIds = Array.isArray(req.body?.escala_evento_ids) ? req.body.escala_evento_ids : [];
+      const escalaEventoIds = [...new Set(rawIds.map((id) => String(id || '').trim()).filter(Boolean))];
+
+      if (!colaboradorId) {
+        return res.status(400).json({ ok: false, erro: 'colaborador_id nao informado' });
+      }
+      if (!escalaEventoIds.length) {
+        return res.status(400).json({ ok: false, erro: 'escala_evento_ids nao informado' });
+      }
+
+      const colab = await client.query('SELECT id FROM colaboradores WHERE id = $1', [colaboradorId]);
+      if (!colab.rowCount) {
+        return res.status(404).json({ ok: false, erro: 'Colaborador nao encontrado' });
+      }
+
+      await client.query('BEGIN');
+
+      const rowsResult = await client.query(
+        `
+        SELECT
+          esc.id,
+          esc.evento_id,
+          esc.colaborador_id,
+          esc.status_pagamento,
+          esc.valor_recreador,
+          ev.data_evento,
+          CASE
+            WHEN ev.data_evento ~ '^\\d{2}/\\d{2}/\\d{4}$'
+            THEN to_date(ev.data_evento, 'DD/MM/YYYY')
+            ELSE NULL
+          END AS data_evento_date
+        FROM escala_eventos esc
+        INNER JOIN eventos ev ON ev.id = esc.evento_id
+        WHERE esc.id = ANY($1::text[])
+        FOR UPDATE
+        `,
+        [escalaEventoIds]
+      );
+
+      const byId = new Map(rowsResult.rows.map((row) => [String(row.id), row]));
+      const skipped = [];
+      const elegiveis = [];
+      const hoje = new Date();
+      hoje.setHours(0, 0, 0, 0);
+
+      for (const id of escalaEventoIds) {
+        const row = byId.get(id);
+        if (!row) {
+          skipped.push({ id, reason: 'Registro nao encontrado' });
+          continue;
+        }
+        if (String(row.colaborador_id || '').trim() !== colaboradorId) {
+          skipped.push({ id, reason: 'Registro nao pertence ao colaborador informado' });
+          continue;
+        }
+        if (!row.data_evento_date || new Date(row.data_evento_date) > hoje) {
+          skipped.push({ id, reason: 'Evento ainda nao foi realizado' });
+          continue;
+        }
+        if (Number(row.valor_recreador || 0) <= 0) {
+          skipped.push({ id, reason: 'Registro sem valor elegivel para pagamento' });
+          continue;
+        }
+        if (String(row.status_pagamento || '').trim().toLowerCase() === 'pago') {
+          skipped.push({ id, reason: 'Pagamento ja estava marcado como pago' });
+          continue;
+        }
+        elegiveis.push(row);
+      }
+
+      let updatedIds = [];
+      if (elegiveis.length) {
+        const idsToUpdate = elegiveis.map((row) => String(row.id));
+        const updateResult = await client.query(
+          `
+          UPDATE escala_eventos
+          SET status_pagamento = 'Pago', updated_at = CURRENT_TIMESTAMP
+          WHERE id = ANY($1::text[])
+          RETURNING id, evento_id
+          `,
+          [idsToUpdate]
+        );
+        updatedIds = updateResult.rows.map((row) => String(row.id));
+        const eventoIds = [...new Set(updateResult.rows.map((row) => String(row.evento_id || '').trim()).filter(Boolean))];
+        for (const eventoId of eventoIds) {
+          await syncEventoPagamentoColaboradorFromEscalaSum(client, eventoId);
+        }
+      }
+
+      await client.query('COMMIT');
+
+      res.json({
+        ok: true,
+        success: skipped.length === 0,
+        updated_count: updatedIds.length,
+        updated_ids: updatedIds,
+        skipped,
+      });
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch {}
+      res.status(500).json({ ok: false, erro: error.message });
+    } finally {
+      client.release();
+    }
+  }
+);
+
 app.get('/colaboradores/:colaboradorId/eventos', async (req, res) => {
   try {
     await ensureColaboradoresTable();
