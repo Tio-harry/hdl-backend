@@ -400,6 +400,11 @@ function getEventoFinanceiroNormalizado(evento) {
   const saldoPago = Number(evento?.saldo_pago) || 0;
   const sinalConfirmado = evento?.sinal_confirmado ? sinal : 0;
   const resta = Math.max(valorTotal - sinalConfirmado - saldoPago, 0);
+  const pagamentoColaborador = Number(evento?.pagamento_colaborador) || 0;
+  const deslocamento = Number(evento?.deslocamento) || 0;
+  const extras = Number(evento?.extras) || 0;
+  const custoTotal = pagamentoColaborador + deslocamento + extras;
+  const lucroEvento = valorTotal - custoTotal;
 
   return {
     valorTotal,
@@ -407,6 +412,8 @@ function getEventoFinanceiroNormalizado(evento) {
     saldoPago,
     sinalConfirmado,
     resta,
+    custoTotal,
+    lucroEvento,
   };
 }
 
@@ -1593,6 +1600,19 @@ async function syncEventoPagamentoColaboradorFromEscalaSum(client, eventoId) {
     `,
     [eventoId]
   );
+
+  await client.query(
+    `
+    UPDATE eventos
+    SET
+      custo_total = COALESCE(pagamento_colaborador, 0) + COALESCE(deslocamento, 0) + COALESCE(extras, 0),
+      lucro_evento = COALESCE(valor_total, 0) - (
+        COALESCE(pagamento_colaborador, 0) + COALESCE(deslocamento, 0) + COALESCE(extras, 0)
+      )
+    WHERE id = $1
+    `,
+    [eventoId]
+  );
 }
 
 async function ensureServicoEventosTable() {
@@ -2212,8 +2232,10 @@ app.put('/eventos/:id', async (req, res) => {
     const mergedEvento = { ...existingEvento.rows[0], ...normalizedPayload };
     const financeiroNormalizado = getEventoFinanceiroNormalizado(mergedEvento);
     normalizedPayload.resta = financeiroNormalizado.resta;
+    normalizedPayload.custo_total = financeiroNormalizado.custoTotal;
+    normalizedPayload.lucro_evento = financeiroNormalizado.lucroEvento;
 
-    const fieldsToPersist = [...new Set([...updateFields, 'resta'])];
+    const fieldsToPersist = [...new Set([...updateFields, 'resta', 'custo_total', 'lucro_evento'])];
     const setClause = fieldsToPersist
       .map((field, index) => `${field} = $${index + 1}`)
       .join(', ');
