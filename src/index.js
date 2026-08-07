@@ -394,6 +394,22 @@ function normalizeEventoValue(field, value) {
   return value;
 }
 
+function getEventoFinanceiroNormalizado(evento) {
+  const valorTotal = Number(evento?.valor_total) || 0;
+  const sinal = Number(evento?.sinal) || 0;
+  const saldoPago = Number(evento?.saldo_pago) || 0;
+  const sinalConfirmado = evento?.sinal_confirmado ? sinal : 0;
+  const resta = Math.max(valorTotal - sinalConfirmado - saldoPago, 0);
+
+  return {
+    valorTotal,
+    sinal,
+    saldoPago,
+    sinalConfirmado,
+    resta,
+  };
+}
+
 function normalizeCicloFinanceiroValue(field, value) {
   if (CICLO_FINANCEIRO_INT_FIELDS.includes(field)) {
     if (value === null || value === undefined || value === '') {
@@ -2145,15 +2161,31 @@ app.get('/contracts', async (req, res) => {
 
 app.get('/eventos', async (req, res) => {
   try {
+    await ensureEscalaEventosTable();
     const result = await pool.query(`
-      SELECT *
-      FROM eventos
+      SELECT
+        e.*,
+        COALESCE(esc.qtd_escalas, 0) AS qtd_escalas,
+        COALESCE(esc.qtd_escalas_pagas, 0) AS qtd_escalas_pagas,
+        COALESCE(esc.qtd_escalas_pendentes, 0) AS qtd_escalas_pendentes,
+        COALESCE(esc.soma_valor_recreador, 0) AS soma_valor_recreador
+      FROM eventos e
+      LEFT JOIN (
+        SELECT
+          evento_id,
+          COUNT(*) AS qtd_escalas,
+          SUM(CASE WHEN LOWER(TRIM(COALESCE(status_pagamento, ''))) = 'pago' THEN 1 ELSE 0 END) AS qtd_escalas_pagas,
+          SUM(CASE WHEN LOWER(TRIM(COALESCE(status_pagamento, ''))) <> 'pago' THEN 1 ELSE 0 END) AS qtd_escalas_pendentes,
+          COALESCE(SUM(COALESCE(valor_recreador, 0)), 0) AS soma_valor_recreador
+        FROM escala_eventos
+        GROUP BY evento_id
+      ) esc ON esc.evento_id = e.id
       ORDER BY
         CASE
-          WHEN data_evento ~ '^\\d{2}/\\d{2}/\\d{4}$'
-          THEN to_date(data_evento, 'DD/MM/YYYY')
+          WHEN e.data_evento ~ '^\\d{2}/\\d{2}/\\d{4}$'
+          THEN to_date(e.data_evento, 'DD/MM/YYYY')
         END ASC NULLS LAST,
-        created_at DESC
+        e.created_at DESC
     `);
     res.json({ ok: true, dados: result.rows });
   } catch (error) {
@@ -2169,10 +2201,23 @@ app.put('/eventos/:id', async (req, res) => {
       return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar' });
     }
 
-    const setClause = updateFields
+    const existingEvento = await pool.query('SELECT * FROM eventos WHERE id = $1', [req.params.id]);
+    if (!existingEvento.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Evento nao encontrado' });
+    }
+
+    const normalizedPayload = Object.fromEntries(
+      updateFields.map((field) => [field, normalizeEventoValue(field, req.body[field])])
+    );
+    const mergedEvento = { ...existingEvento.rows[0], ...normalizedPayload };
+    const financeiroNormalizado = getEventoFinanceiroNormalizado(mergedEvento);
+    normalizedPayload.resta = financeiroNormalizado.resta;
+
+    const fieldsToPersist = [...new Set([...updateFields, 'resta'])];
+    const setClause = fieldsToPersist
       .map((field, index) => `${field} = $${index + 1}`)
       .join(', ');
-    const values = updateFields.map((field) => normalizeEventoValue(field, req.body[field]));
+    const values = fieldsToPersist.map((field) => normalizedPayload[field]);
 
     const result = await pool.query(`
       UPDATE eventos
