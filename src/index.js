@@ -1044,6 +1044,19 @@ function normalizePagamentoEscalaColaboradorValue(field, value) {
     return normalized || null;
   }
 
+  if (field === 'data_pagamento') {
+    if (value === null || value === undefined || String(value).trim() === '') return null;
+    const normalized = String(value).trim();
+    const dateOnlyMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const parsed = dateOnlyMatch ? new Date(`${normalized}T12:00:00`) : new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) {
+      const err = new Error('data_pagamento invalida');
+      err.statusCode = 400;
+      throw err;
+    }
+    return parsed;
+  }
+
   return value;
 }
 
@@ -2993,6 +3006,7 @@ app.post('/escalas-evento/:id/pagamentos', requirePermission(ACCESS_PERMISSIONS.
     const novoPagamentoId = req.body?.id ? String(req.body.id).trim() : crypto.randomUUID();
     const tipoPagamento = normalizePagamentoEscalaColaboradorValue('tipo_pagamento', req.body?.tipo_pagamento);
     const valor = normalizePagamentoEscalaColaboradorValue('valor', req.body?.valor);
+    const dataPagamento = normalizePagamentoEscalaColaboradorValue('data_pagamento', req.body?.data_pagamento);
     const observacao = normalizePagamentoEscalaColaboradorValue('observacao', req.body?.observacao);
 
     const result = await pool.query(
@@ -3004,16 +3018,76 @@ app.post('/escalas-evento/:id/pagamentos', requirePermission(ACCESS_PERMISSIONS.
         colaborador_id,
         tipo_pagamento,
         valor,
+        data_pagamento,
         observacao,
         status
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'ativo')
+      VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamp, CURRENT_TIMESTAMP), $8, 'ativo')
       RETURNING *
       `,
-      [novoPagamentoId, escalaId, eventoId, colaboradorId, tipoPagamento, valor, observacao]
+      [novoPagamentoId, escalaId, eventoId, colaboradorId, tipoPagamento, valor, dataPagamento, observacao]
     );
 
     return res.status(201).json({ ok: true, dados: result.rows[0] });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.put('/pagamentos-escala-colaborador/:id', requirePermission(ACCESS_PERMISSIONS.COLABORADORES_EDIT), async (req, res) => {
+  try {
+    await ensurePagamentosEscalaColaboradorTable();
+    const pagamentoId = String(req.params.id || '').trim();
+    if (!pagamentoId) {
+      return res.status(400).json({ ok: false, erro: 'id do pagamento nao informado' });
+    }
+
+    const existingResult = await pool.query(
+      `
+      SELECT *
+      FROM pagamentos_escala_colaborador
+      WHERE id = $1
+      `,
+      [pagamentoId]
+    );
+
+    if (!existingResult.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Pagamento da escala nao encontrado' });
+    }
+
+    const pagamentoAtual = existingResult.rows[0];
+    if (String(pagamentoAtual?.status || '').trim().toLowerCase() === 'cancelado') {
+      return res.status(409).json({ ok: false, erro: 'Pagamentos cancelados nao podem ser editados' });
+    }
+
+    const editableFields = ['tipo_pagamento', 'valor', 'data_pagamento', 'observacao'];
+    const providedFields = getProvidedFields(req.body || {}, editableFields);
+    if (!providedFields.length) {
+      return res.status(400).json({ ok: false, erro: 'Nenhum campo valido informado para edicao' });
+    }
+
+    const values = [];
+    const setParts = [];
+    for (const field of providedFields) {
+      const normalizedValue = normalizePagamentoEscalaColaboradorValue(field, req.body[field]);
+      if (field === 'data_pagamento' && normalizedValue === null) {
+        return res.status(400).json({ ok: false, erro: 'data_pagamento invalida' });
+      }
+      values.push(normalizedValue);
+      setParts.push(`${field} = $${values.length}`);
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE pagamentos_escala_colaborador
+      SET ${setParts.join(', ')}, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $${values.length + 1}
+      RETURNING *
+      `,
+      [...values, pagamentoId]
+    );
+
+    return res.json({ ok: true, dados: result.rows[0] });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
   }
