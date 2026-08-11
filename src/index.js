@@ -215,6 +215,16 @@ const VALOR_REFERENCIA_REGIAO_FIELDS = [
   'observacoes',
   'ativo',
 ];
+const PARCERIA_COLABORADOR_FIELDS = [
+  'region_id',
+  'titulo_parceria',
+  'nome_servico_funcao',
+  'valor_referencia_especifico',
+  'disponibilidade',
+  'prioridade_envio',
+  'observacoes',
+  'ativo',
+];
 const NATUREZA_ITEM_CATALOG_VALUES = [
   'Permanente em posse',
   'Retornável',
@@ -626,6 +636,41 @@ function normalizeValorReferenciaRegiaoValue(field, value) {
   if (field === 'ativo') {
     const normalized = normalizeBooleanValue(value);
     return normalized == null ? true : normalized;
+  }
+
+  return value;
+}
+
+function normalizeParceriaColaboradorValue(field, value) {
+  if (field === 'region_id') {
+    const id = String(value ?? '').trim();
+    return id || null;
+  }
+
+  if (field === 'titulo_parceria') {
+    return String(value ?? '').trim();
+  }
+
+  if (field === 'nome_servico_funcao' || field === 'disponibilidade' || field === 'observacoes') {
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim();
+    return text || null;
+  }
+
+  if (field === 'valor_referencia_especifico') {
+    const normalized = normalizeNumericValue(value, field);
+    if (normalized === null || normalized < 0) {
+      const err = new Error('valor_referencia_especifico deve ser um numero maior ou igual a zero');
+      err.statusCode = 400;
+      throw err;
+    }
+    return normalized;
+  }
+
+  if (field === 'prioridade_envio' || field === 'ativo') {
+    const normalized = normalizeBooleanValue(value);
+    if (field === 'ativo') return normalized == null ? true : normalized;
+    return normalized == null ? false : normalized;
   }
 
   return value;
@@ -1879,6 +1924,44 @@ async function ensureValoresReferenciaRegiaoTable() {
   `);
 }
 
+async function ensureParceriasColaboradorTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS parcerias_colaborador (
+      id TEXT PRIMARY KEY,
+      colaborador_id TEXT NOT NULL REFERENCES colaboradores(id) ON DELETE CASCADE,
+      region_id TEXT REFERENCES regions(id) ON DELETE SET NULL,
+      titulo_parceria TEXT NOT NULL,
+      nome_servico_funcao TEXT,
+      valor_referencia_especifico NUMERIC(10,2) NOT NULL DEFAULT 0,
+      disponibilidade TEXT,
+      prioridade_envio BOOLEAN NOT NULL DEFAULT FALSE,
+      observacoes TEXT,
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS colaborador_id TEXT`);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS region_id TEXT`);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS titulo_parceria TEXT`);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS nome_servico_funcao TEXT`);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS valor_referencia_especifico NUMERIC(10,2) NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS disponibilidade TEXT`);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS prioridade_envio BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS observacoes TEXT`);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS ativo BOOLEAN NOT NULL DEFAULT TRUE`);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+  await pool.query(`ALTER TABLE parcerias_colaborador ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_parcerias_colaborador_colaborador_id
+    ON parcerias_colaborador(colaborador_id)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_parcerias_colaborador_region_id
+    ON parcerias_colaborador(region_id)
+  `);
+}
+
 async function ensureItemCatalogTable() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS item_catalog (
@@ -2196,6 +2279,7 @@ async function ensureRecreatorItemsTable() {
 async function ensureGestaoEquipeSchema() {
   await ensureRegionsTable();
   await ensureValoresReferenciaRegiaoTable();
+  await ensureParceriasColaboradorTable();
   await ensureItemCatalogTable();
   await ensureColaboradoresTable();
   await ensureColaboradorPerfilEquipeTable();
@@ -2950,6 +3034,131 @@ app.get(
   }
 );
 
+app.get('/colaboradores/:id/parcerias', async (req, res) => {
+  try {
+    await ensureGestaoEquipeSchema();
+
+    const colaboradorId = String(req.params.id ?? '').trim();
+    if (!colaboradorId) {
+      return res.status(400).json({ ok: false, erro: 'colaborador_id invalido' });
+    }
+
+    const colaborador = await pool.query('SELECT id FROM colaboradores WHERE id = $1', [colaboradorId]);
+    if (!colaborador.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Colaborador nao encontrado' });
+    }
+
+    const result = await pool.query(
+      `
+      SELECT
+        pc.*,
+        r.nome_regiao,
+        r.sigla_regiao
+      FROM parcerias_colaborador pc
+      LEFT JOIN regions r ON r.id = pc.region_id
+      WHERE pc.colaborador_id = $1
+      ORDER BY pc.ativo DESC, pc.prioridade_envio DESC, pc.created_at DESC
+      `,
+      [colaboradorId]
+    );
+
+    res.json({ ok: true, dados: result.rows });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.post('/colaboradores/:id/parcerias', requirePermission(ACCESS_PERMISSIONS.COLABORADORES_EDIT), async (req, res) => {
+  try {
+    await ensureGestaoEquipeSchema();
+
+    const colaboradorId = String(req.params.id ?? '').trim();
+    if (!colaboradorId) {
+      return res.status(400).json({ ok: false, erro: 'colaborador_id invalido' });
+    }
+
+    const colaborador = await pool.query('SELECT id FROM colaboradores WHERE id = $1', [colaboradorId]);
+    if (!colaborador.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Colaborador nao encontrado' });
+    }
+
+    const id = req.body.id || crypto.randomUUID();
+    const tituloParceria = normalizeParceriaColaboradorValue('titulo_parceria', req.body.titulo_parceria);
+    if (!tituloParceria) {
+      return res.status(400).json({ ok: false, erro: 'titulo_parceria e obrigatorio' });
+    }
+
+    const regionId = normalizeParceriaColaboradorValue('region_id', req.body.region_id);
+    if (regionId) {
+      const regionExists = await pool.query('SELECT id FROM regions WHERE id = $1', [regionId]);
+      if (!regionExists.rowCount) {
+        return res.status(400).json({ ok: false, erro: 'Regiao nao encontrada' });
+      }
+    }
+
+    const nomeServicoFuncao = normalizeParceriaColaboradorValue(
+      'nome_servico_funcao',
+      req.body.nome_servico_funcao
+    );
+    const valorReferenciaEspecifico = normalizeParceriaColaboradorValue(
+      'valor_referencia_especifico',
+      req.body.valor_referencia_especifico ?? 0
+    );
+    const disponibilidade = normalizeParceriaColaboradorValue('disponibilidade', req.body.disponibilidade);
+    const prioridadeEnvio = normalizeParceriaColaboradorValue('prioridade_envio', req.body.prioridade_envio);
+    const observacoes = normalizeParceriaColaboradorValue('observacoes', req.body.observacoes);
+    const ativo = normalizeParceriaColaboradorValue('ativo', req.body.ativo ?? true);
+
+    const result = await pool.query(
+      `
+      INSERT INTO parcerias_colaborador (
+        id,
+        colaborador_id,
+        region_id,
+        titulo_parceria,
+        nome_servico_funcao,
+        valor_referencia_especifico,
+        disponibilidade,
+        prioridade_envio,
+        observacoes,
+        ativo
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING *
+      `,
+      [
+        id,
+        colaboradorId,
+        regionId,
+        tituloParceria,
+        nomeServicoFuncao,
+        valorReferenciaEspecifico,
+        disponibilidade,
+        prioridadeEnvio,
+        observacoes,
+        ativo,
+      ]
+    );
+
+    const enriched = await pool.query(
+      `
+      SELECT
+        pc.*,
+        r.nome_regiao,
+        r.sigla_regiao
+      FROM parcerias_colaborador pc
+      LEFT JOIN regions r ON r.id = pc.region_id
+      WHERE pc.id = $1
+      `,
+      [id]
+    );
+
+    res.status(201).json({ ok: true, dados: enriched.rows[0] || result.rows[0] });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
 app.post('/colaboradores', requirePermission(ACCESS_PERMISSIONS.COLABORADORES_CREATE), async (req, res) => {
   try {
     await ensureColaboradoresTable();
@@ -3069,6 +3278,110 @@ app.put('/colaboradores/:id', requireMutationPermission({
     res.json({ ok: true, dados: result.rows[0] });
   } catch (error) {
     res.status(500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.put('/parcerias-colaborador/:id', requireMutationPermission({
+  toggleField: 'ativo',
+  togglePermission: ACCESS_PERMISSIONS.COLABORADORES_TOGGLE,
+  defaultPermission: ACCESS_PERMISSIONS.COLABORADORES_EDIT,
+}), async (req, res) => {
+  try {
+    await ensureGestaoEquipeSchema();
+
+    const updateFields = getProvidedFields(req.body, PARCERIA_COLABORADOR_FIELDS);
+    if (!updateFields.length) {
+      return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar' });
+    }
+
+    if (updateFields.includes('titulo_parceria')) {
+      const titulo = normalizeParceriaColaboradorValue('titulo_parceria', req.body.titulo_parceria);
+      if (!titulo) {
+        return res.status(400).json({ ok: false, erro: 'titulo_parceria e obrigatorio' });
+      }
+    }
+
+    if (updateFields.includes('region_id')) {
+      const regionId = normalizeParceriaColaboradorValue('region_id', req.body.region_id);
+      if (regionId) {
+        const regionExists = await pool.query('SELECT id FROM regions WHERE id = $1', [regionId]);
+        if (!regionExists.rowCount) {
+          return res.status(400).json({ ok: false, erro: 'Regiao nao encontrada' });
+        }
+      }
+    }
+
+    const values = updateFields.map((field) => normalizeParceriaColaboradorValue(field, req.body[field]));
+    const setClause = updateFields.map((field, index) => `${field} = $${index + 1}`).join(', ');
+
+    const result = await pool.query(
+      `
+      UPDATE parcerias_colaborador
+      SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $${values.length + 1}
+      RETURNING *
+      `,
+      [...values, req.params.id]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Parceria nao encontrada' });
+    }
+
+    const enriched = await pool.query(
+      `
+      SELECT
+        pc.*,
+        r.nome_regiao,
+        r.sigla_regiao
+      FROM parcerias_colaborador pc
+      LEFT JOIN regions r ON r.id = pc.region_id
+      WHERE pc.id = $1
+      `,
+      [req.params.id]
+    );
+
+    res.json({ ok: true, dados: enriched.rows[0] || result.rows[0] });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.patch('/parcerias-colaborador/:id/ativo', requirePermission(ACCESS_PERMISSIONS.COLABORADORES_TOGGLE), async (req, res) => {
+  try {
+    await ensureGestaoEquipeSchema();
+
+    const ativo = normalizeParceriaColaboradorValue('ativo', req.body?.ativo);
+    const result = await pool.query(
+      `
+      UPDATE parcerias_colaborador
+      SET ativo = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+      RETURNING *
+      `,
+      [ativo, req.params.id]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Parceria nao encontrada' });
+    }
+
+    const enriched = await pool.query(
+      `
+      SELECT
+        pc.*,
+        r.nome_regiao,
+        r.sigla_regiao
+      FROM parcerias_colaborador pc
+      LEFT JOIN regions r ON r.id = pc.region_id
+      WHERE pc.id = $1
+      `,
+      [req.params.id]
+    );
+
+    res.json({ ok: true, dados: enriched.rows[0] || result.rows[0] });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
   }
 });
 

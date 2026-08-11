@@ -169,6 +169,21 @@ CREATE TABLE valores_referencia_regiao (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE parcerias_colaborador (
+  id TEXT PRIMARY KEY,
+  colaborador_id TEXT NOT NULL REFERENCES colaboradores(id) ON DELETE CASCADE,
+  region_id TEXT REFERENCES regions(id) ON DELETE SET NULL,
+  titulo_parceria TEXT NOT NULL,
+  nome_servico_funcao TEXT,
+  valor_referencia_especifico NUMERIC(10,2) NOT NULL DEFAULT 0,
+  disponibilidade TEXT,
+  prioridade_envio BOOLEAN NOT NULL DEFAULT FALSE,
+  observacoes TEXT,
+  ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE textos_rapidos_contrato (
   id TEXT PRIMARY KEY,
   nome_botao TEXT NOT NULL,
