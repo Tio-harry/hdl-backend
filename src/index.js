@@ -280,9 +280,12 @@ const ESCALA_EVENTO_FIELDS = [
   'valor_recreador',
   'funcao',
   'status_pagamento',
-  'status_aceite'
+  'status_aceite',
+  'observacao_escala'
 ];
 const ESCALA_EVENTO_NUMERIC_FIELDS = ['valor_recreador'];
+const PAGAMENTOS_ESCALA_COLABORADOR_TIPOS = ['adiantamento', 'pagamento_parcial', 'pagamento_final', 'ajuste'];
+const PAGAMENTOS_ESCALA_COLABORADOR_STATUS = ['ativo', 'cancelado'];
 const SERVICO_EVENTO_FIELDS = [
   'evento_id',
   'servico_id',
@@ -995,6 +998,52 @@ function normalizeEscalaEventoValue(field, value) {
     return normalized;
   }
 
+  if (field === 'observacao_escala') {
+    if (value === null || value === undefined) return null;
+    const normalized = String(value).trim();
+    return normalized || null;
+  }
+
+  return value;
+}
+
+function normalizePagamentoEscalaColaboradorValue(field, value) {
+  if (field === 'valor') {
+    const normalized = normalizeNumericValue(value, field);
+    if (normalized === null || normalized <= 0) {
+      const err = new Error('valor deve ser maior que zero');
+      err.statusCode = 400;
+      throw err;
+    }
+    return normalized;
+  }
+
+  if (field === 'tipo_pagamento') {
+    const normalized = String(value || 'adiantamento').trim().toLowerCase();
+    if (!PAGAMENTOS_ESCALA_COLABORADOR_TIPOS.includes(normalized)) {
+      const err = new Error('tipo_pagamento invalido');
+      err.statusCode = 400;
+      throw err;
+    }
+    return normalized;
+  }
+
+  if (field === 'status') {
+    const normalized = String(value || 'ativo').trim().toLowerCase();
+    if (!PAGAMENTOS_ESCALA_COLABORADOR_STATUS.includes(normalized)) {
+      const err = new Error('status invalido');
+      err.statusCode = 400;
+      throw err;
+    }
+    return normalized;
+  }
+
+  if (field === 'observacao') {
+    if (value === null || value === undefined) return null;
+    const normalized = String(value).trim();
+    return normalized || null;
+  }
+
   return value;
 }
 
@@ -1655,6 +1704,7 @@ async function ensureEscalaEventosTable() {
       funcao TEXT DEFAULT 'Recreador',
       status_pagamento TEXT DEFAULT 'Pendente',
       status_aceite TEXT DEFAULT 'Pendente',
+      observacao_escala TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -1667,8 +1717,44 @@ async function ensureEscalaEventosTable() {
   await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS funcao TEXT DEFAULT 'Recreador'`);
   await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS status_pagamento TEXT DEFAULT 'Pendente'`);
   await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS status_aceite TEXT DEFAULT 'Pendente'`);
+  await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS observacao_escala TEXT`);
   await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
   await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+}
+
+async function ensurePagamentosEscalaColaboradorTable() {
+  await ensureEscalaEventosTable();
+  await ensureColaboradoresTable();
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pagamentos_escala_colaborador (
+      id TEXT PRIMARY KEY,
+      escala_evento_id TEXT NOT NULL REFERENCES escala_eventos(id),
+      evento_id TEXT NOT NULL REFERENCES eventos(id),
+      colaborador_id TEXT NOT NULL REFERENCES colaboradores(id),
+      tipo_pagamento TEXT NOT NULL DEFAULT 'adiantamento',
+      valor NUMERIC(10,2) NOT NULL DEFAULT 0,
+      data_pagamento TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      observacao TEXT,
+      status TEXT NOT NULL DEFAULT 'ativo',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`ALTER TABLE pagamentos_escala_colaborador ADD COLUMN IF NOT EXISTS escala_evento_id TEXT`);
+  await pool.query(`ALTER TABLE pagamentos_escala_colaborador ADD COLUMN IF NOT EXISTS evento_id TEXT`);
+  await pool.query(`ALTER TABLE pagamentos_escala_colaborador ADD COLUMN IF NOT EXISTS colaborador_id TEXT`);
+  await pool.query(`ALTER TABLE pagamentos_escala_colaborador ADD COLUMN IF NOT EXISTS tipo_pagamento TEXT DEFAULT 'adiantamento'`);
+  await pool.query(`ALTER TABLE pagamentos_escala_colaborador ADD COLUMN IF NOT EXISTS valor NUMERIC(10,2) DEFAULT 0`);
+  await pool.query(`ALTER TABLE pagamentos_escala_colaborador ADD COLUMN IF NOT EXISTS data_pagamento TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+  await pool.query(`ALTER TABLE pagamentos_escala_colaborador ADD COLUMN IF NOT EXISTS observacao TEXT`);
+  await pool.query(`ALTER TABLE pagamentos_escala_colaborador ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ativo'`);
+  await pool.query(`ALTER TABLE pagamentos_escala_colaborador ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+  await pool.query(`ALTER TABLE pagamentos_escala_colaborador ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_pagamentos_escala_colaborador_escala_evento_id ON pagamentos_escala_colaborador (escala_evento_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_pagamentos_escala_colaborador_evento_id ON pagamentos_escala_colaborador (evento_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_pagamentos_escala_colaborador_colaborador_id ON pagamentos_escala_colaborador (colaborador_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_pagamentos_escala_colaborador_status ON pagamentos_escala_colaborador (status)`);
 }
 
 /**
@@ -2813,6 +2899,152 @@ app.patch(
     }
   }
 );
+
+app.get('/escalas-evento/:id/pagamentos', requirePermission(ACCESS_PERMISSIONS.COLABORADORES_EDIT), async (req, res) => {
+  try {
+    await ensurePagamentosEscalaColaboradorTable();
+    const escalaId = String(req.params.id || '').trim();
+    if (!escalaId) {
+      return res.status(400).json({ ok: false, erro: 'id da escala nao informado' });
+    }
+
+    const escalaResult = await pool.query(
+      `
+      SELECT id, evento_id, colaborador_id, valor_recreador
+      FROM escala_eventos
+      WHERE id = $1
+      `,
+      [escalaId]
+    );
+    if (!escalaResult.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Escala nao encontrada' });
+    }
+
+    const historicoResult = await pool.query(
+      `
+      SELECT *
+      FROM pagamentos_escala_colaborador
+      WHERE escala_evento_id = $1
+      ORDER BY data_pagamento DESC, created_at DESC
+      `,
+      [escalaId]
+    );
+
+    const historico = historicoResult.rows;
+    const resumo = historico.reduce(
+      (acc, row) => {
+        const valor = Number(row?.valor || 0);
+        const status = String(row?.status || '').trim().toLowerCase();
+        if (!Number.isFinite(valor)) return acc;
+        if (status === 'ativo') {
+          acc.total_ativo += valor;
+          acc.quantidade_ativos += 1;
+        } else if (status === 'cancelado') {
+          acc.total_cancelado += valor;
+        }
+        return acc;
+      },
+      { total_ativo: 0, total_cancelado: 0, quantidade_ativos: 0 }
+    );
+
+    return res.json({
+      ok: true,
+      dados: {
+        escala_evento_id: escalaResult.rows[0].id,
+        evento_id: escalaResult.rows[0].evento_id,
+        colaborador_id: escalaResult.rows[0].colaborador_id,
+        valor_recreador: escalaResult.rows[0].valor_recreador,
+        historico,
+        resumo,
+      },
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.post('/escalas-evento/:id/pagamentos', requirePermission(ACCESS_PERMISSIONS.COLABORADORES_EDIT), async (req, res) => {
+  try {
+    await ensurePagamentosEscalaColaboradorTable();
+    const escalaId = String(req.params.id || '').trim();
+    if (!escalaId) {
+      return res.status(400).json({ ok: false, erro: 'id da escala nao informado' });
+    }
+
+    const escalaResult = await pool.query(
+      `
+      SELECT id, evento_id, colaborador_id
+      FROM escala_eventos
+      WHERE id = $1
+      `,
+      [escalaId]
+    );
+    if (!escalaResult.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Escala nao encontrada' });
+    }
+
+    const escala = escalaResult.rows[0];
+    const colaboradorId = String(escala.colaborador_id || '').trim();
+    const eventoId = String(escala.evento_id || '').trim();
+    if (!colaboradorId || !eventoId) {
+      return res.status(400).json({ ok: false, erro: 'Escala sem colaborador_id ou evento_id valido' });
+    }
+
+    const novoPagamentoId = req.body?.id ? String(req.body.id).trim() : crypto.randomUUID();
+    const tipoPagamento = normalizePagamentoEscalaColaboradorValue('tipo_pagamento', req.body?.tipo_pagamento);
+    const valor = normalizePagamentoEscalaColaboradorValue('valor', req.body?.valor);
+    const observacao = normalizePagamentoEscalaColaboradorValue('observacao', req.body?.observacao);
+
+    const result = await pool.query(
+      `
+      INSERT INTO pagamentos_escala_colaborador (
+        id,
+        escala_evento_id,
+        evento_id,
+        colaborador_id,
+        tipo_pagamento,
+        valor,
+        observacao,
+        status
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'ativo')
+      RETURNING *
+      `,
+      [novoPagamentoId, escalaId, eventoId, colaboradorId, tipoPagamento, valor, observacao]
+    );
+
+    return res.status(201).json({ ok: true, dados: result.rows[0] });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.patch('/pagamentos-escala-colaborador/:id/cancelar', requirePermission(ACCESS_PERMISSIONS.COLABORADORES_TOGGLE), async (req, res) => {
+  try {
+    await ensurePagamentosEscalaColaboradorTable();
+    const pagamentoId = String(req.params.id || '').trim();
+    if (!pagamentoId) {
+      return res.status(400).json({ ok: false, erro: 'id do pagamento nao informado' });
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE pagamentos_escala_colaborador
+      SET status = 'cancelado', updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING *
+      `,
+      [pagamentoId]
+    );
+    if (!result.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Pagamento da escala nao encontrado' });
+    }
+
+    return res.json({ ok: true, dados: result.rows[0] });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
 
 app.get('/colaboradores/:colaboradorId/eventos', async (req, res) => {
   try {
@@ -5662,9 +5894,10 @@ app.post('/eventos/:id/escalas', async (req, res) => {
         valor_recreador,
         funcao,
         status_pagamento,
-        status_aceite
+        status_aceite,
+        observacao_escala
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
     `, [
       id,
@@ -5675,7 +5908,8 @@ app.post('/eventos/:id/escalas', async (req, res) => {
       valorRecreador,
       req.body.funcao || 'Recreador',
       req.body.status_pagamento || 'Pendente',
-      req.body.status_aceite || 'Pendente'
+      req.body.status_aceite || 'Pendente',
+      normalizeEscalaEventoValue('observacao_escala', req.body.observacao_escala)
     ]);
 
     await syncEventoPagamentoColaboradorFromEscalaSum(pool, req.params.id);
@@ -5903,6 +6137,23 @@ app.put('/escalas-evento/:id', async (req, res) => {
 app.delete('/escalas-evento/:id', async (req, res) => {
   try {
     await ensureEscalaEventosTable();
+    await ensurePagamentosEscalaColaboradorTable();
+
+    const pagamentosRelacionados = await pool.query(
+      `
+      SELECT COUNT(*)::int AS total
+      FROM pagamentos_escala_colaborador
+      WHERE escala_evento_id = $1
+      `,
+      [req.params.id]
+    );
+    const totalRelacionados = Number(pagamentosRelacionados.rows[0]?.total || 0);
+    if (totalRelacionados > 0) {
+      return res.status(409).json({
+        ok: false,
+        erro: 'Esta escala possui adiantamentos/pagamentos registrados. Cancele ou revise o historico antes de excluir a escala.',
+      });
+    }
 
     const result = await pool.query(
       'DELETE FROM escala_eventos WHERE id = $1 RETURNING *',
@@ -5920,7 +6171,7 @@ app.delete('/escalas-evento/:id', async (req, res) => {
 
     res.json({ ok: true, dados: result.rows[0] });
   } catch (error) {
-    res.status(500).json({ ok: false, erro: error.message });
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
   }
 });
 
@@ -7268,6 +7519,11 @@ app.post("/process-contract-text", async (req, res) => {
     await ensureEscalaEventosTable();
   } catch (e) {
     console.error('Falha ao garantir tabela escala_eventos:', e);
+  }
+  try {
+    await ensurePagamentosEscalaColaboradorTable();
+  } catch (e) {
+    console.error('Falha ao garantir tabela pagamentos_escala_colaborador:', e);
   }
   try {
     await ensureGestaoEquipeSchema();

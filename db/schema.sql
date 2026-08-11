@@ -96,11 +96,32 @@ CREATE TABLE escala_eventos (
   evento_id TEXT REFERENCES eventos(id) ON DELETE CASCADE,
   colaborador_id TEXT NOT NULL,
   colaborador_nome TEXT,
+  id_recreador TEXT,
+  valor_recreador NUMERIC(10,2),
   funcao TEXT DEFAULT 'Recreador',
   status_pagamento TEXT DEFAULT 'Pendente',
   status_aceite TEXT DEFAULT 'Pendente',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  observacao_escala TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE pagamentos_escala_colaborador (
+  id TEXT PRIMARY KEY,
+  escala_evento_id TEXT NOT NULL REFERENCES escala_eventos(id),
+  evento_id TEXT NOT NULL REFERENCES eventos(id),
+  colaborador_id TEXT NOT NULL REFERENCES colaboradores(id),
+  tipo_pagamento TEXT NOT NULL DEFAULT 'adiantamento',
+  valor NUMERIC(10,2) NOT NULL DEFAULT 0,
+  data_pagamento TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  observacao TEXT,
+  status TEXT NOT NULL DEFAULT 'ativo',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_pagamentos_escala_colaborador_escala_evento_id ON pagamentos_escala_colaborador (escala_evento_id);
+CREATE INDEX idx_pagamentos_escala_colaborador_evento_id ON pagamentos_escala_colaborador (evento_id);
+CREATE INDEX idx_pagamentos_escala_colaborador_colaborador_id ON pagamentos_escala_colaborador (colaborador_id);
+CREATE INDEX idx_pagamentos_escala_colaborador_status ON pagamentos_escala_colaborador (status);
 
 CREATE TABLE servico_eventos (
   id TEXT PRIMARY KEY,
