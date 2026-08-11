@@ -148,6 +148,27 @@ CREATE TABLE servicos (
 );
 
 -- Textos rápidos do Gerador de Contrato (Fase 1)
+CREATE TABLE regions (
+  id TEXT PRIMARY KEY,
+  nome_regiao TEXT NOT NULL,
+  sigla_regiao TEXT,
+  ativa BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE valores_referencia_regiao (
+  id TEXT PRIMARY KEY,
+  region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE CASCADE,
+  nome_servico_funcao TEXT NOT NULL,
+  valor_referencia NUMERIC(10,2) NOT NULL DEFAULT 0,
+  base_duracao TEXT,
+  observacoes TEXT,
+  ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE textos_rapidos_contrato (
   id TEXT PRIMARY KEY,
   nome_botao TEXT NOT NULL,

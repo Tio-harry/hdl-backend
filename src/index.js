@@ -207,6 +207,14 @@ const SERVICO_MATERIAL_REQUISITO_UPDATE_FIELDS = [
   'ativo'
 ];
 const REGION_FIELDS = ['nome_regiao', 'ativa', 'sigla_regiao'];
+const VALOR_REFERENCIA_REGIAO_FIELDS = [
+  'region_id',
+  'nome_servico_funcao',
+  'valor_referencia',
+  'base_duracao',
+  'observacoes',
+  'ativo',
+];
 const NATUREZA_ITEM_CATALOG_VALUES = [
   'Permanente em posse',
   'Retornável',
@@ -586,6 +594,40 @@ function normalizeRegionValue(field, value) {
     const s = String(value).trim();
     return s ? s.toUpperCase() : null;
   }
+  return value;
+}
+
+function normalizeValorReferenciaRegiaoValue(field, value) {
+  if (field === 'region_id') {
+    const id = String(value ?? '').trim();
+    return id || null;
+  }
+
+  if (field === 'nome_servico_funcao') {
+    return String(value ?? '').trim();
+  }
+
+  if (field === 'valor_referencia') {
+    const normalized = normalizeNumericValue(value, field);
+    if (normalized === null || normalized < 0) {
+      const err = new Error('valor_referencia deve ser um numero maior ou igual a zero');
+      err.statusCode = 400;
+      throw err;
+    }
+    return normalized;
+  }
+
+  if (field === 'base_duracao' || field === 'observacoes') {
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim();
+    return text || null;
+  }
+
+  if (field === 'ativo') {
+    const normalized = normalizeBooleanValue(value);
+    return normalized == null ? true : normalized;
+  }
+
   return value;
 }
 
@@ -1809,6 +1851,34 @@ async function ensureRegionsTable() {
   await pool.query(`ALTER TABLE regions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
 }
 
+async function ensureValoresReferenciaRegiaoTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS valores_referencia_regiao (
+      id TEXT PRIMARY KEY,
+      region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE CASCADE,
+      nome_servico_funcao TEXT NOT NULL,
+      valor_referencia NUMERIC(10,2) NOT NULL DEFAULT 0,
+      base_duracao TEXT,
+      observacoes TEXT,
+      ativo BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query(`ALTER TABLE valores_referencia_regiao ADD COLUMN IF NOT EXISTS region_id TEXT`);
+  await pool.query(`ALTER TABLE valores_referencia_regiao ADD COLUMN IF NOT EXISTS nome_servico_funcao TEXT`);
+  await pool.query(`ALTER TABLE valores_referencia_regiao ADD COLUMN IF NOT EXISTS valor_referencia NUMERIC(10,2) NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE valores_referencia_regiao ADD COLUMN IF NOT EXISTS base_duracao TEXT`);
+  await pool.query(`ALTER TABLE valores_referencia_regiao ADD COLUMN IF NOT EXISTS observacoes TEXT`);
+  await pool.query(`ALTER TABLE valores_referencia_regiao ADD COLUMN IF NOT EXISTS ativo BOOLEAN NOT NULL DEFAULT TRUE`);
+  await pool.query(`ALTER TABLE valores_referencia_regiao ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+  await pool.query(`ALTER TABLE valores_referencia_regiao ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_valores_referencia_regiao_region_id
+    ON valores_referencia_regiao(region_id)
+  `);
+}
+
 async function ensureItemCatalogTable() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS item_catalog (
@@ -2125,6 +2195,7 @@ async function ensureRecreatorItemsTable() {
 
 async function ensureGestaoEquipeSchema() {
   await ensureRegionsTable();
+  await ensureValoresReferenciaRegiaoTable();
   await ensureItemCatalogTable();
   await ensureColaboradoresTable();
   await ensureColaboradorPerfilEquipeTable();
@@ -3154,6 +3225,208 @@ app.delete('/regions/:id', requirePermission(ACCESS_PERMISSIONS.REGIONS_DELETE),
     res.json({ ok: true, dados: result.rows[0] });
   } catch (error) {
     res.status(500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.get('/valores-referencia-regiao', async (req, res) => {
+  try {
+    await ensureGestaoEquipeSchema();
+
+    const filters = [];
+    const params = [];
+
+    if (req.query.region_id != null && String(req.query.region_id).trim() !== '') {
+      params.push(String(req.query.region_id).trim());
+      filters.push(`vrr.region_id = $${params.length}`);
+    }
+
+    if (req.query.ativo !== undefined) {
+      params.push(normalizeBooleanValue(req.query.ativo));
+      filters.push(`vrr.ativo = $${params.length}`);
+    }
+
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const result = await pool.query(
+      `
+      SELECT
+        vrr.*,
+        r.nome_regiao,
+        r.sigla_regiao
+      FROM valores_referencia_regiao vrr
+      INNER JOIN regions r ON r.id = vrr.region_id
+      ${where}
+      ORDER BY r.nome_regiao ASC, vrr.nome_servico_funcao ASC, vrr.created_at DESC
+      `,
+      params
+    );
+
+    res.json({ ok: true, dados: result.rows });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.post('/valores-referencia-regiao', requirePermission(ACCESS_PERMISSIONS.REGIONS_EDIT), async (req, res) => {
+  try {
+    await ensureGestaoEquipeSchema();
+
+    const id = req.body.id || crypto.randomUUID();
+    const regionId = normalizeValorReferenciaRegiaoValue('region_id', req.body.region_id);
+    const nomeServicoFuncao = normalizeValorReferenciaRegiaoValue(
+      'nome_servico_funcao',
+      req.body.nome_servico_funcao
+    );
+    const ativo = normalizeValorReferenciaRegiaoValue('ativo', req.body.ativo ?? true);
+
+    if (!regionId) {
+      return res.status(400).json({ ok: false, erro: 'region_id e obrigatorio' });
+    }
+    if (!nomeServicoFuncao) {
+      return res.status(400).json({ ok: false, erro: 'nome_servico_funcao e obrigatorio' });
+    }
+
+    const regionExists = await pool.query('SELECT id FROM regions WHERE id = $1', [regionId]);
+    if (!regionExists.rowCount) {
+      return res.status(400).json({ ok: false, erro: 'Regiao nao encontrada' });
+    }
+
+    const valorReferencia = normalizeValorReferenciaRegiaoValue(
+      'valor_referencia',
+      req.body.valor_referencia
+    );
+    const baseDuracao = normalizeValorReferenciaRegiaoValue('base_duracao', req.body.base_duracao);
+    const observacoes = normalizeValorReferenciaRegiaoValue('observacoes', req.body.observacoes);
+
+    const result = await pool.query(
+      `
+      INSERT INTO valores_referencia_regiao (
+        id,
+        region_id,
+        nome_servico_funcao,
+        valor_referencia,
+        base_duracao,
+        observacoes,
+        ativo
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *
+      `,
+      [id, regionId, nomeServicoFuncao, valorReferencia, baseDuracao, observacoes, ativo]
+    );
+
+    const enriched = await pool.query(
+      `
+      SELECT
+        vrr.*,
+        r.nome_regiao,
+        r.sigla_regiao
+      FROM valores_referencia_regiao vrr
+      INNER JOIN regions r ON r.id = vrr.region_id
+      WHERE vrr.id = $1
+      `,
+      [id]
+    );
+
+    res.status(201).json({ ok: true, dados: enriched.rows[0] || result.rows[0] });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.put('/valores-referencia-regiao/:id', requireMutationPermission({
+  toggleField: 'ativo',
+  togglePermission: ACCESS_PERMISSIONS.REGIONS_TOGGLE,
+  defaultPermission: ACCESS_PERMISSIONS.REGIONS_EDIT,
+}), async (req, res) => {
+  try {
+    await ensureGestaoEquipeSchema();
+
+    const updateFields = getProvidedFields(req.body, VALOR_REFERENCIA_REGIAO_FIELDS).filter(
+      (field) => field !== 'region_id'
+    );
+
+    if (!updateFields.length) {
+      return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar' });
+    }
+
+    if (updateFields.includes('nome_servico_funcao')) {
+      const nome = normalizeValorReferenciaRegiaoValue('nome_servico_funcao', req.body.nome_servico_funcao);
+      if (!nome) {
+        return res.status(400).json({ ok: false, erro: 'nome_servico_funcao e obrigatorio' });
+      }
+    }
+
+    const values = updateFields.map((field) => normalizeValorReferenciaRegiaoValue(field, req.body[field]));
+    const setClause = updateFields.map((field, index) => `${field} = $${index + 1}`).join(', ');
+
+    const result = await pool.query(
+      `
+      UPDATE valores_referencia_regiao
+      SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $${values.length + 1}
+      RETURNING *
+      `,
+      [...values, req.params.id]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Valor de referencia nao encontrado' });
+    }
+
+    const enriched = await pool.query(
+      `
+      SELECT
+        vrr.*,
+        r.nome_regiao,
+        r.sigla_regiao
+      FROM valores_referencia_regiao vrr
+      INNER JOIN regions r ON r.id = vrr.region_id
+      WHERE vrr.id = $1
+      `,
+      [req.params.id]
+    );
+
+    res.json({ ok: true, dados: enriched.rows[0] || result.rows[0] });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.patch('/valores-referencia-regiao/:id/ativo', requirePermission(ACCESS_PERMISSIONS.REGIONS_TOGGLE), async (req, res) => {
+  try {
+    await ensureGestaoEquipeSchema();
+
+    const ativo = normalizeValorReferenciaRegiaoValue('ativo', req.body?.ativo);
+    const result = await pool.query(
+      `
+      UPDATE valores_referencia_regiao
+      SET ativo = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+      RETURNING *
+      `,
+      [ativo, req.params.id]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({ ok: false, erro: 'Valor de referencia nao encontrado' });
+    }
+
+    const enriched = await pool.query(
+      `
+      SELECT
+        vrr.*,
+        r.nome_regiao,
+        r.sigla_regiao
+      FROM valores_referencia_regiao vrr
+      INNER JOIN regions r ON r.id = vrr.region_id
+      WHERE vrr.id = $1
+      `,
+      [req.params.id]
+    );
+
+    res.json({ ok: true, dados: enriched.rows[0] || result.rows[0] });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
   }
 });
 
