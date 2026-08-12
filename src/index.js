@@ -507,12 +507,33 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       ee.colaborador_id,
       ee.colaborador_nome,
       ee.id_recreador,
-      p.region_id,
-      r.nome_regiao,
-      r.sigla_regiao
+      perfil.region_id,
+      perfil.nome_regiao,
+      perfil.sigla_regiao
     FROM escala_eventos ee
-    LEFT JOIN colaborador_perfil_equipe p ON p.colaborador_id = ee.colaborador_id
-    LEFT JOIN regions r ON r.id = p.region_id
+    LEFT JOIN LATERAL (
+      SELECT
+        p.region_id,
+        r.nome_regiao,
+        r.sigla_regiao
+      FROM colaborador_perfil_equipe p
+      LEFT JOIN regions r ON r.id = p.region_id
+      WHERE (
+        p.colaborador_id = ee.colaborador_id
+        OR (
+          p.id_recreador IS NOT NULL
+          AND ee.id_recreador IS NOT NULL
+          AND BTRIM(p.id_recreador) <> ''
+          AND BTRIM(ee.id_recreador) <> ''
+          AND p.id_recreador = ee.id_recreador
+        )
+      )
+      ORDER BY
+        CASE WHEN p.colaborador_id = ee.colaborador_id THEN 0 ELSE 1 END,
+        p.updated_at DESC NULLS LAST,
+        p.created_at DESC NULLS LAST
+      LIMIT 1
+    ) perfil ON TRUE
     WHERE ee.evento_id = $1
     ORDER BY ee.created_at ASC, ee.colaborador_nome ASC
     `,
