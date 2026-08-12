@@ -2480,6 +2480,30 @@ app.put('/eventos/:id', async (req, res) => {
       return res.status(404).json({ ok: false, erro: 'Evento nao encontrado' });
     }
 
+    if (updateFields.includes('status_aceite_praca')) {
+      await ensureEscalaEventosTable();
+      const valorAtual = String(existingEvento.rows[0]?.status_aceite_praca ?? '').trim();
+      const valorNovo = String(normalizeEventoValue('status_aceite_praca', req.body.status_aceite_praca) ?? '').trim();
+
+      if (valorNovo !== valorAtual) {
+        const escalasRelacionadas = await pool.query(
+          `
+          SELECT COUNT(*)::int AS total
+          FROM escala_eventos
+          WHERE evento_id = $1
+          `,
+          [req.params.id]
+        );
+        const totalEscalas = Number(escalasRelacionadas.rows[0]?.total || 0);
+        if (totalEscalas > 0) {
+          return res.status(409).json({
+            ok: false,
+            erro: 'A praça não pode ser alterada enquanto houver equipe escalada. Remova primeiro os colaboradores da Equipe Escalada.',
+          });
+        }
+      }
+    }
+
     const normalizedPayload = Object.fromEntries(
       updateFields.map((field) => [field, normalizeEventoValue(field, req.body[field])])
     );
