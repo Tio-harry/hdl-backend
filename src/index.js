@@ -458,6 +458,15 @@ const PRACA_STATUS_LABEL_BY_NOME = new Map([
   ['sao paulo', 'São Paulo SP'],
 ]);
 
+const PRACA_STATUS_LABEL_BY_SIGLA = new Map([
+  ['REC', 'Recife PE'],
+  ['PE', 'Caruaru PE'],
+  ['JAMPA', 'João Pessoa PB'],
+  ['FORT', 'Fortaleza CE'],
+  ['RN', 'Natal RN'],
+  ['SP', 'São Paulo SP'],
+]);
+
 function buildPracaStatusAceiteFromRegion(region) {
   const nomeBase = String(region?.nome_regiao ?? '').trim().replace(/\s+/g, ' ');
   if (!nomeBase) return '';
@@ -472,6 +481,19 @@ function buildPracaStatusAceiteFromRegion(region) {
   return PRACA_STATUS_LABEL_BY_NOME.get(normalizePracaDiagnostico(nomeBase)) || '';
 }
 
+function buildPracaStatusAceiteFromStatusValue(value) {
+  const bruto = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!bruto) return '';
+
+  const semPrefixo = bruto.replace(/^(OK|Pendente)\s+/i, '').trim();
+  if (!semPrefixo) return '';
+
+  const viaRegion = buildPracaStatusAceiteFromRegion({ nome_regiao: semPrefixo });
+  if (viaRegion) return viaRegion;
+
+  return PRACA_STATUS_LABEL_BY_NOME.get(normalizePracaDiagnostico(semPrefixo)) || semPrefixo;
+}
+
 function extractIdRecreadorPrefix(value) {
   const trimmed = String(value ?? '').trim().toUpperCase();
   if (!trimmed) return '';
@@ -484,17 +506,17 @@ function resolvePracaDiagnosticoEscala(escala, regionsBySigla) {
   const perfilMatchType = String(escala?.perfil_match_type ?? '').trim() || 'nao_identificado';
   const idRecreador = String(escala?.id_recreador ?? '').trim().toUpperCase();
   const prefixoIdRecreador = extractIdRecreadorPrefix(idRecreador);
-  const regionViaIdRecreador = prefixoIdRecreador ? (regionsBySigla.get(prefixoIdRecreador) || null) : null;
+  const regionViaIdRecreador = prefixoIdRecreador ? (regionsBySigla.get(prefixoIdRecreador) || (PRACA_STATUS_LABEL_BY_SIGLA.has(prefixoIdRecreador) ? { id: '', nome_regiao: PRACA_STATUS_LABEL_BY_SIGLA.get(prefixoIdRecreador), sigla_regiao: prefixoIdRecreador } : null)) : null;
   const pracaViaIdRecreador = regionViaIdRecreador ? buildPracaStatusAceiteFromRegion(regionViaIdRecreador) : '';
 
   if (pracaViaIdRecreador) {
+    const pracaViaPerfilNormalizada = normalizePracaDiagnostico(pracaViaPerfil);
+    const pracaViaIdNormalizada = normalizePracaDiagnostico(pracaViaIdRecreador);
+    const perfilConfereComId = pracaViaPerfil && pracaViaPerfilNormalizada === pracaViaIdNormalizada;
     return {
       praca: pracaViaIdRecreador,
       region_id: String(regionViaIdRecreador?.id ?? '').trim(),
-      vinculo_utilizado:
-        pracaViaPerfil && normalizePracaDiagnostico(pracaViaPerfil) === normalizePracaDiagnostico(pracaViaIdRecreador)
-          ? (perfilMatchType === 'colaborador_id' ? 'misto' : 'id_recreador')
-          : 'id_recreador',
+      vinculo_utilizado: perfilConfereComId ? 'misto' : 'id_recreador',
       praca_via_perfil: pracaViaPerfil,
       praca_via_id_recreador: pracaViaIdRecreador,
       prefixo_id_recreador: prefixoIdRecreador,
@@ -549,7 +571,8 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
   }
 
   const evento = eventoResult.rows[0];
-  const pracaAtivaAtual = String(evento?.status_aceite_praca ?? '').trim();
+  const pracaAtivaAtualBruta = String(evento?.status_aceite_praca ?? '').trim();
+  const pracaAtivaAtual = buildPracaStatusAceiteFromStatusValue(pracaAtivaAtualBruta) || pracaAtivaAtualBruta;
 
   const escalasResult = await pool.query(
     `
@@ -558,12 +581,24 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       ee.colaborador_id,
       ee.colaborador_nome,
       ee.id_recreador,
+      perfil.perfil_match_type,
       perfil.region_id,
       perfil.nome_regiao,
       perfil.sigla_regiao
     FROM escala_eventos ee
     LEFT JOIN LATERAL (
       SELECT
+        CASE
+          WHEN p.colaborador_id = ee.colaborador_id THEN 'colaborador_id'
+          WHEN (
+            p.id_recreador IS NOT NULL
+            AND ee.id_recreador IS NOT NULL
+            AND BTRIM(p.id_recreador) <> ''
+            AND BTRIM(ee.id_recreador) <> ''
+            AND p.id_recreador = ee.id_recreador
+          ) THEN 'id_recreador'
+          ELSE 'nao_identificado'
+        END AS perfil_match_type,
         p.region_id,
         r.nome_regiao,
         r.sigla_regiao
