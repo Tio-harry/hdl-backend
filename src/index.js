@@ -472,6 +472,56 @@ function buildPracaStatusAceiteFromRegion(region) {
   return PRACA_STATUS_LABEL_BY_NOME.get(normalizePracaDiagnostico(nomeBase)) || '';
 }
 
+function extractIdRecreadorPrefix(value) {
+  const trimmed = String(value ?? '').trim().toUpperCase();
+  if (!trimmed) return '';
+  const match = trimmed.match(/^[A-Z]+/);
+  return match ? match[0] : '';
+}
+
+function resolvePracaDiagnosticoEscala(escala, regionsBySigla) {
+  const pracaViaPerfil = buildPracaStatusAceiteFromRegion(escala);
+  const perfilMatchType = String(escala?.perfil_match_type ?? '').trim() || 'nao_identificado';
+  const idRecreador = String(escala?.id_recreador ?? '').trim().toUpperCase();
+  const prefixoIdRecreador = extractIdRecreadorPrefix(idRecreador);
+  const regionViaIdRecreador = prefixoIdRecreador ? (regionsBySigla.get(prefixoIdRecreador) || null) : null;
+  const pracaViaIdRecreador = regionViaIdRecreador ? buildPracaStatusAceiteFromRegion(regionViaIdRecreador) : '';
+
+  if (pracaViaIdRecreador) {
+    return {
+      praca: pracaViaIdRecreador,
+      region_id: String(regionViaIdRecreador?.id ?? '').trim(),
+      vinculo_utilizado:
+        pracaViaPerfil && normalizePracaDiagnostico(pracaViaPerfil) === normalizePracaDiagnostico(pracaViaIdRecreador)
+          ? (perfilMatchType === 'colaborador_id' ? 'misto' : 'id_recreador')
+          : 'id_recreador',
+      praca_via_perfil: pracaViaPerfil,
+      praca_via_id_recreador: pracaViaIdRecreador,
+      prefixo_id_recreador: prefixoIdRecreador,
+    };
+  }
+
+  if (pracaViaPerfil) {
+    return {
+      praca: pracaViaPerfil,
+      region_id: String(escala?.region_id ?? '').trim(),
+      vinculo_utilizado: perfilMatchType === 'id_recreador' ? 'id_recreador' : 'colaborador_id',
+      praca_via_perfil: pracaViaPerfil,
+      praca_via_id_recreador: '',
+      prefixo_id_recreador: prefixoIdRecreador,
+    };
+  }
+
+  return {
+    praca: '',
+    region_id: String(escala?.region_id ?? '').trim(),
+    vinculo_utilizado: 'nao_identificado',
+    praca_via_perfil: '',
+    praca_via_id_recreador: pracaViaIdRecreador,
+    prefixo_id_recreador: prefixoIdRecreador,
+  };
+}
+
 async function diagnosticarPracaEquipeEvento(eventoId) {
   await ensureEscalaEventosTable();
   await ensureGestaoEquipeSchema();
@@ -494,6 +544,7 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       colaboradores_sem_praca: [],
       colaboradores_por_praca: [],
       regioes_nao_mapeadas: [],
+      vinculo_utilizado: 'nao_identificado',
     };
   }
 
@@ -556,36 +607,61 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       colaboradores_sem_praca: [],
       colaboradores_por_praca: [],
       regioes_nao_mapeadas: [],
+      vinculo_utilizado: 'nao_identificado',
     };
   }
+
+  const regionsResult = await pool.query(
+    `
+    SELECT id, nome_regiao, sigla_regiao
+    FROM regions
+    WHERE sigla_regiao IS NOT NULL AND BTRIM(sigla_regiao) <> ''
+    `
+  );
+  const regionsBySigla = new Map(
+    (Array.isArray(regionsResult.rows) ? regionsResult.rows : []).map((row) => [
+      String(row?.sigla_regiao ?? '').trim().toUpperCase(),
+      row,
+    ])
+  );
 
   const colaboradoresSemPraca = [];
   const regioesNaoMapeadas = [];
   const pracasMap = new Map();
+  const vinculosUtilizados = new Set();
 
   for (const escala of escalas) {
     const colaboradorId = String(escala?.colaborador_id ?? '').trim();
     const colaboradorNome = String(escala?.colaborador_nome ?? '').trim() || 'Colaborador sem nome';
-    const regionId = String(escala?.region_id ?? '').trim();
     const nomeRegiao = String(escala?.nome_regiao ?? '').trim();
     const siglaRegiao = String(escala?.sigla_regiao ?? '').trim();
+    const diagnosticoEscala = resolvePracaDiagnosticoEscala(escala, regionsBySigla);
+    const pracaEquipe = String(diagnosticoEscala.praca ?? '').trim();
+    const regionId = String(diagnosticoEscala.region_id ?? '').trim();
 
-    if (!regionId || !nomeRegiao) {
-      colaboradoresSemPraca.push({
-        colaborador_id: colaboradorId,
-        colaborador_nome: colaboradorNome,
-      });
-      continue;
+    if (diagnosticoEscala.vinculo_utilizado && diagnosticoEscala.vinculo_utilizado !== 'nao_identificado') {
+      vinculosUtilizados.add(diagnosticoEscala.vinculo_utilizado);
     }
 
-    const pracaEquipe = buildPracaStatusAceiteFromRegion(escala);
     if (!pracaEquipe) {
+      if (!regionId && !nomeRegiao && !diagnosticoEscala.prefixo_id_recreador) {
+        colaboradoresSemPraca.push({
+          colaborador_id: colaboradorId,
+          colaborador_nome: colaboradorNome,
+          id_recreador: escala?.id_recreador != null ? String(escala.id_recreador).trim() : '',
+          vinculo_utilizado: diagnosticoEscala.vinculo_utilizado,
+        });
+        continue;
+      }
       regioesNaoMapeadas.push({
         colaborador_id: colaboradorId,
         colaborador_nome: colaboradorNome,
         region_id: regionId,
         nome_regiao: nomeRegiao,
         sigla_regiao: siglaRegiao,
+        id_recreador: escala?.id_recreador != null ? String(escala.id_recreador).trim() : '',
+        prefixo_id_recreador: diagnosticoEscala.prefixo_id_recreador,
+        vinculo_utilizado: diagnosticoEscala.vinculo_utilizado,
       });
       continue;
     }
@@ -603,6 +679,9 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       colaborador_nome: colaboradorNome,
       escala_id: String(escala?.id ?? '').trim(),
       id_recreador: escala?.id_recreador != null ? String(escala.id_recreador).trim() : '',
+      vinculo_utilizado: diagnosticoEscala.vinculo_utilizado,
+      praca_via_perfil: diagnosticoEscala.praca_via_perfil,
+      praca_via_id_recreador: diagnosticoEscala.praca_via_id_recreador,
     });
 
     pracasMap.set(pracaEquipe, existente);
@@ -610,6 +689,12 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
 
   const pracasEncontradas = Array.from(pracasMap.keys());
   const colaboradoresPorPraca = Array.from(pracasMap.values());
+  const vinculoUtilizado =
+    vinculosUtilizados.size === 0
+      ? 'nao_identificado'
+      : vinculosUtilizados.size === 1
+        ? Array.from(vinculosUtilizados)[0]
+        : 'misto';
 
   if (colaboradoresSemPraca.length > 0) {
     return {
@@ -624,6 +709,7 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       colaboradores_sem_praca: colaboradoresSemPraca,
       colaboradores_por_praca: colaboradoresPorPraca,
       regioes_nao_mapeadas: [],
+      vinculo_utilizado: vinculoUtilizado,
     };
   }
 
@@ -640,6 +726,7 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       colaboradores_sem_praca: [],
       colaboradores_por_praca: colaboradoresPorPraca,
       regioes_nao_mapeadas: regioesNaoMapeadas,
+      vinculo_utilizado: vinculoUtilizado,
     };
   }
 
@@ -656,6 +743,7 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       colaboradores_sem_praca: [],
       colaboradores_por_praca: colaboradoresPorPraca,
       regioes_nao_mapeadas: [],
+      vinculo_utilizado: vinculoUtilizado,
     };
   }
 
@@ -678,6 +766,7 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
     colaboradores_sem_praca: [],
     colaboradores_por_praca: colaboradoresPorPraca,
     regioes_nao_mapeadas: [],
+    vinculo_utilizado: vinculoUtilizado,
   };
 }
 
