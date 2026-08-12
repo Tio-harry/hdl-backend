@@ -438,6 +438,198 @@ function getEventoFinanceiroNormalizado(evento) {
   };
 }
 
+function normalizePracaDiagnostico(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildPracaStatusAceiteFromRegion(region) {
+  const nomeBase = String(region?.nome_regiao ?? '').trim();
+  const sigla = String(region?.sigla_regiao ?? '').trim().toUpperCase();
+  if (!nomeBase) return '';
+  const nomeSemUf = nomeBase.replace(/\s*-\s*([A-Z]{2})$/i, '').trim();
+  const nome = nomeSemUf || nomeBase;
+  if (sigla && !(new RegExp(`\\b${sigla}$`, 'i')).test(nome)) {
+    return `${nome} ${sigla}`.trim();
+  }
+  return nome.trim();
+}
+
+async function diagnosticarPracaEquipeEvento(eventoId) {
+  await ensureEscalaEventosTable();
+  await ensureGestaoEquipeSchema();
+
+  const eventoResult = await pool.query(
+    'SELECT id, status_aceite_praca FROM eventos WHERE id = $1',
+    [eventoId]
+  );
+
+  if (!eventoResult.rowCount) {
+    return {
+      evento_id: String(eventoId ?? '').trim(),
+      praca_ativa_atual: '',
+      praca_identificada_equipe: '',
+      region_id_identificado: '',
+      pode_corrigir: false,
+      motivo: 'evento_nao_encontrado',
+      quantidade_escalados: 0,
+      pracas_encontradas: [],
+      colaboradores_sem_praca: [],
+      colaboradores_por_praca: [],
+    };
+  }
+
+  const evento = eventoResult.rows[0];
+  const pracaAtivaAtual = String(evento?.status_aceite_praca ?? '').trim();
+
+  const escalasResult = await pool.query(
+    `
+    SELECT
+      ee.id,
+      ee.colaborador_id,
+      ee.colaborador_nome,
+      ee.id_recreador,
+      p.region_id,
+      r.nome_regiao,
+      r.sigla_regiao
+    FROM escala_eventos ee
+    LEFT JOIN colaborador_perfil_equipe p ON p.colaborador_id = ee.colaborador_id
+    LEFT JOIN regions r ON r.id = p.region_id
+    WHERE ee.evento_id = $1
+    ORDER BY ee.created_at ASC, ee.colaborador_nome ASC
+    `,
+    [eventoId]
+  );
+
+  const escalas = Array.isArray(escalasResult.rows) ? escalasResult.rows : [];
+  const quantidadeEscalados = escalas.length;
+
+  if (!quantidadeEscalados) {
+    return {
+      evento_id: String(evento.id),
+      praca_ativa_atual: pracaAtivaAtual,
+      praca_identificada_equipe: '',
+      region_id_identificado: '',
+      pode_corrigir: false,
+      motivo: 'sem_equipe_escalada',
+      quantidade_escalados: 0,
+      pracas_encontradas: [],
+      colaboradores_sem_praca: [],
+      colaboradores_por_praca: [],
+    };
+  }
+
+  const colaboradoresSemPraca = [];
+  const pracasMap = new Map();
+
+  for (const escala of escalas) {
+    const colaboradorId = String(escala?.colaborador_id ?? '').trim();
+    const colaboradorNome = String(escala?.colaborador_nome ?? '').trim() || 'Colaborador sem nome';
+    const regionId = String(escala?.region_id ?? '').trim();
+    const pracaEquipe = buildPracaStatusAceiteFromRegion(escala);
+
+    if (!regionId || !pracaEquipe) {
+      colaboradoresSemPraca.push({
+        colaborador_id: colaboradorId,
+        colaborador_nome: colaboradorNome,
+      });
+      continue;
+    }
+
+    const existente = pracasMap.get(pracaEquipe) || {
+      praca: pracaEquipe,
+      region_id: regionId,
+      quantidade: 0,
+      colaboradores: [],
+    };
+
+    existente.quantidade += 1;
+    existente.colaboradores.push({
+      colaborador_id: colaboradorId,
+      colaborador_nome: colaboradorNome,
+      escala_id: String(escala?.id ?? '').trim(),
+      id_recreador: escala?.id_recreador != null ? String(escala.id_recreador).trim() : '',
+    });
+
+    pracasMap.set(pracaEquipe, existente);
+  }
+
+  const pracasEncontradas = Array.from(pracasMap.keys());
+  const colaboradoresPorPraca = Array.from(pracasMap.values());
+
+  if (colaboradoresSemPraca.length > 0) {
+    return {
+      evento_id: String(evento.id),
+      praca_ativa_atual: pracaAtivaAtual,
+      praca_identificada_equipe: '',
+      region_id_identificado: '',
+      pode_corrigir: false,
+      motivo: 'colaboradores_sem_praca',
+      quantidade_escalados: quantidadeEscalados,
+      pracas_encontradas: pracasEncontradas,
+      colaboradores_sem_praca: colaboradoresSemPraca,
+      colaboradores_por_praca: colaboradoresPorPraca,
+    };
+  }
+
+  if (pracasEncontradas.length !== 1) {
+    return {
+      evento_id: String(evento.id),
+      praca_ativa_atual: pracaAtivaAtual,
+      praca_identificada_equipe: '',
+      region_id_identificado: '',
+      pode_corrigir: false,
+      motivo: 'equipe_mista',
+      quantidade_escalados: quantidadeEscalados,
+      pracas_encontradas: pracasEncontradas,
+      colaboradores_sem_praca: [],
+      colaboradores_por_praca: colaboradoresPorPraca,
+    };
+  }
+
+  const pracaUnica = colaboradoresPorPraca[0] || null;
+  const pracaIdentificadaEquipe = String(pracaUnica?.praca ?? '').trim();
+  const regionIdIdentificado = String(pracaUnica?.region_id ?? '').trim();
+  const mesmaPraca =
+    normalizePracaDiagnostico(pracaAtivaAtual) !== '' &&
+    normalizePracaDiagnostico(pracaAtivaAtual) === normalizePracaDiagnostico(pracaIdentificadaEquipe);
+
+  return {
+    evento_id: String(evento.id),
+    praca_ativa_atual: pracaAtivaAtual,
+    praca_identificada_equipe: pracaIdentificadaEquipe,
+    region_id_identificado: regionIdIdentificado,
+    pode_corrigir: !mesmaPraca,
+    motivo: mesmaPraca ? 'praca_ja_confere' : 'praca_divergente',
+    quantidade_escalados: quantidadeEscalados,
+    pracas_encontradas: pracasEncontradas,
+    colaboradores_sem_praca: [],
+    colaboradores_por_praca: colaboradoresPorPraca,
+  };
+}
+
+function getMensagemDiagnosticoPracaEquipe(motivo) {
+  if (motivo === 'sem_equipe_escalada') {
+    return 'Nao foi possivel corrigir porque o evento nao possui equipe escalada.';
+  }
+  if (motivo === 'colaboradores_sem_praca') {
+    return 'Nao foi possivel corrigir porque um ou mais colaboradores nao possuem praca identificada no perfil da equipe.';
+  }
+  if (motivo === 'equipe_mista') {
+    return 'Nao foi possivel corrigir porque a Equipe Escalada possui colaboradores de mais de uma praca.';
+  }
+  if (motivo === 'praca_ja_confere') {
+    return 'A praca ativa ja confere com a praca da Equipe Escalada.';
+  }
+  return 'Nao foi possivel corrigir a praca pela equipe escalada.';
+}
+
 function normalizeCicloFinanceiroValue(field, value) {
   if (CICLO_FINANCEIRO_INT_FIELDS.includes(field)) {
     if (value === null || value === undefined || value === '') {
@@ -2535,6 +2727,53 @@ app.put('/eventos/:id', async (req, res) => {
 
     const refreshed = await pool.query('SELECT * FROM eventos WHERE id = $1', [req.params.id]);
     res.json({ ok: true, dados: refreshed.rows[0] || result.rows[0] });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.get('/eventos/:id/diagnostico-praca-equipe', async (req, res) => {
+  try {
+    const diagnostico = await diagnosticarPracaEquipeEvento(req.params.id);
+    if (diagnostico.motivo === 'evento_nao_encontrado') {
+      return res.status(404).json({ ok: false, erro: 'Evento nao encontrado' });
+    }
+
+    res.json({ ok: true, dados: diagnostico });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  }
+});
+
+app.patch('/eventos/:id/corrigir-praca-pela-equipe', async (req, res) => {
+  try {
+    const diagnostico = await diagnosticarPracaEquipeEvento(req.params.id);
+    if (diagnostico.motivo === 'evento_nao_encontrado') {
+      return res.status(404).json({ ok: false, erro: 'Evento nao encontrado' });
+    }
+
+    if (diagnostico.pode_corrigir !== true || diagnostico.motivo !== 'praca_divergente') {
+      return res.status(409).json({ ok: false, erro: getMensagemDiagnosticoPracaEquipe(diagnostico.motivo) });
+    }
+
+    const pracaAnterior = String(diagnostico.praca_ativa_atual ?? '').trim();
+    const pracaCorrigida = String(diagnostico.praca_identificada_equipe ?? '').trim();
+
+    await pool.query(
+      'UPDATE eventos SET status_aceite_praca = $1 WHERE id = $2',
+      [pracaCorrigida, req.params.id]
+    );
+
+    res.json({
+      ok: true,
+      dados: {
+        evento_id: String(req.params.id),
+        praca_anterior: pracaAnterior,
+        praca_corrigida: pracaCorrigida,
+        motivo: diagnostico.motivo,
+        quantidade_escalados: diagnostico.quantidade_escalados,
+      },
+    });
   } catch (error) {
     res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
   }
