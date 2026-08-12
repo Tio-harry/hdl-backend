@@ -449,16 +449,27 @@ function normalizePracaDiagnostico(value) {
     .trim();
 }
 
+const PRACA_STATUS_LABEL_BY_NOME = new Map([
+  ['recife', 'Recife PE'],
+  ['caruaru', 'Caruaru PE'],
+  ['joao pessoa', 'João Pessoa PB'],
+  ['fortaleza', 'Fortaleza CE'],
+  ['natal', 'Natal RN'],
+  ['sao paulo', 'São Paulo SP'],
+]);
+
 function buildPracaStatusAceiteFromRegion(region) {
-  const nomeBase = String(region?.nome_regiao ?? '').trim();
-  const sigla = String(region?.sigla_regiao ?? '').trim().toUpperCase();
+  const nomeBase = String(region?.nome_regiao ?? '').trim().replace(/\s+/g, ' ');
   if (!nomeBase) return '';
-  const nomeSemUf = nomeBase.replace(/\s*-\s*([A-Z]{2})$/i, '').trim();
-  const nome = nomeSemUf || nomeBase;
-  if (sigla && !(new RegExp(`\\b${sigla}$`, 'i')).test(nome)) {
-    return `${nome} ${sigla}`.trim();
+
+  const matchUf = nomeBase.match(/^(.*?)(?:\s*-\s*|\s+)([A-Z]{2})$/i);
+  if (matchUf) {
+    const nomeCidade = String(matchUf[1] ?? '').trim().replace(/\s+/g, ' ');
+    const uf = String(matchUf[2] ?? '').trim().toUpperCase();
+    return nomeCidade && uf ? `${nomeCidade} ${uf}`.trim() : '';
   }
-  return nome.trim();
+
+  return PRACA_STATUS_LABEL_BY_NOME.get(normalizePracaDiagnostico(nomeBase)) || '';
 }
 
 async function diagnosticarPracaEquipeEvento(eventoId) {
@@ -482,6 +493,7 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       pracas_encontradas: [],
       colaboradores_sem_praca: [],
       colaboradores_por_praca: [],
+      regioes_nao_mapeadas: [],
     };
   }
 
@@ -522,22 +534,37 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       pracas_encontradas: [],
       colaboradores_sem_praca: [],
       colaboradores_por_praca: [],
+      regioes_nao_mapeadas: [],
     };
   }
 
   const colaboradoresSemPraca = [];
+  const regioesNaoMapeadas = [];
   const pracasMap = new Map();
 
   for (const escala of escalas) {
     const colaboradorId = String(escala?.colaborador_id ?? '').trim();
     const colaboradorNome = String(escala?.colaborador_nome ?? '').trim() || 'Colaborador sem nome';
     const regionId = String(escala?.region_id ?? '').trim();
-    const pracaEquipe = buildPracaStatusAceiteFromRegion(escala);
+    const nomeRegiao = String(escala?.nome_regiao ?? '').trim();
+    const siglaRegiao = String(escala?.sigla_regiao ?? '').trim();
 
-    if (!regionId || !pracaEquipe) {
+    if (!regionId || !nomeRegiao) {
       colaboradoresSemPraca.push({
         colaborador_id: colaboradorId,
         colaborador_nome: colaboradorNome,
+      });
+      continue;
+    }
+
+    const pracaEquipe = buildPracaStatusAceiteFromRegion(escala);
+    if (!pracaEquipe) {
+      regioesNaoMapeadas.push({
+        colaborador_id: colaboradorId,
+        colaborador_nome: colaboradorNome,
+        region_id: regionId,
+        nome_regiao: nomeRegiao,
+        sigla_regiao: siglaRegiao,
       });
       continue;
     }
@@ -575,6 +602,23 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       pracas_encontradas: pracasEncontradas,
       colaboradores_sem_praca: colaboradoresSemPraca,
       colaboradores_por_praca: colaboradoresPorPraca,
+      regioes_nao_mapeadas: [],
+    };
+  }
+
+  if (regioesNaoMapeadas.length > 0) {
+    return {
+      evento_id: String(evento.id),
+      praca_ativa_atual: pracaAtivaAtual,
+      praca_identificada_equipe: '',
+      region_id_identificado: '',
+      pode_corrigir: false,
+      motivo: 'praca_nao_mapeada',
+      quantidade_escalados: quantidadeEscalados,
+      pracas_encontradas: pracasEncontradas,
+      colaboradores_sem_praca: [],
+      colaboradores_por_praca: colaboradoresPorPraca,
+      regioes_nao_mapeadas: regioesNaoMapeadas,
     };
   }
 
@@ -590,6 +634,7 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
       pracas_encontradas: pracasEncontradas,
       colaboradores_sem_praca: [],
       colaboradores_por_praca: colaboradoresPorPraca,
+      regioes_nao_mapeadas: [],
     };
   }
 
@@ -611,6 +656,7 @@ async function diagnosticarPracaEquipeEvento(eventoId) {
     pracas_encontradas: pracasEncontradas,
     colaboradores_sem_praca: [],
     colaboradores_por_praca: colaboradoresPorPraca,
+    regioes_nao_mapeadas: [],
   };
 }
 
@@ -620,6 +666,9 @@ function getMensagemDiagnosticoPracaEquipe(motivo) {
   }
   if (motivo === 'colaboradores_sem_praca') {
     return 'Nao foi possivel corrigir porque um ou mais colaboradores nao possuem praca identificada no perfil da equipe.';
+  }
+  if (motivo === 'praca_nao_mapeada') {
+    return 'Nao foi possivel corrigir porque a praca da equipe nao corresponde a uma praca valida do sistema.';
   }
   if (motivo === 'equipe_mista') {
     return 'Nao foi possivel corrigir porque a Equipe Escalada possui colaboradores de mais de uma praca.';
