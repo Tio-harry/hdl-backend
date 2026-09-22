@@ -359,6 +359,20 @@ function moneyOrZero(value) {
   return normalized === null ? 0 : normalized;
 }
 
+function buildContractEventoObservacoes(contract) {
+  const fields = [
+    ['Faixa etária', 'faixa_etaria'],
+    ['Aniversariante', 'aniversariante'],
+    ['Tema', 'tema'],
+    ['Espaço', 'espaco'],
+  ];
+  return fields.map(([label, field]) => {
+    const value = String(contract[field] ?? '').trim().replace(/\s+/g, ' ');
+    const missing = !value || /^n[aã]o informado$/i.test(value);
+    return `${label}: ${missing ? 'Não informado' : value}`;
+  }).join('\n');
+}
+
 function calculateContractResta(contract) {
   if (contract.saldo !== null && contract.saldo !== undefined && contract.saldo !== '') {
     return moneyOrZero(contract.saldo);
@@ -7770,9 +7784,10 @@ for (const row of ultimo.rows) {
         sinal,
         resta,
         qtd_recreadores,
-        status_financeiro
+        status_financeiro,
+        observacoes
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
     `, [
       eventoId,
       contract.id,
@@ -7790,7 +7805,8 @@ for (const row of ultimo.rows) {
       moneyOrZero(contract.entrada),
       calculateContractResta(contract),
       eventoQtdRecreadores,
-      'Em andamento'
+      'Em andamento',
+      buildContractEventoObservacoes(contract)
     ]);
 
     await client.query('COMMIT');
