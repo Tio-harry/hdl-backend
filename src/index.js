@@ -6,6 +6,7 @@ const cors = require('cors');
 const crypto = require('crypto');
 require('dotenv').config();
 const { parseContractText } = require("./services/contractTextParser");
+const { normalizeContractContact } = require('./services/contractContact');
 const {
   AIContractOrganizerError,
   organizeContractTextWithAI,
@@ -43,6 +44,7 @@ app.use(createAutomaticBackupRouter());
 
 const CONTRACT_INSERT_FIELDS = [
   'nome_contratante',
+  'contato_contratante',
   'local',
   'data_evento',
   'horario_inicio',
@@ -319,6 +321,7 @@ function normalizeJsonValue(value, fieldName) {
 }
 
 function normalizeContractValue(field, value) {
+  if (field === 'contato_contratante') return normalizeContractContact(value);
   if (CONTRACT_JSON_FIELDS.includes(field)) {
     return normalizeJsonValue(value, field);
   }
@@ -8046,7 +8049,12 @@ app.post("/process-contract-text", async (req, res) => {
   }
 });
 
+async function ensureContractContactColumn() {
+  await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS contato_contratante TEXT NULL');
+}
+
 (async function startServer() {
+  await ensureContractContactColumn();
   try {
     await ensureAuthSchema();
   } catch (e) {

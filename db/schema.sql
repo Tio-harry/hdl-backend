@@ -2,6 +2,7 @@ CREATE TABLE contracts (
   id TEXT PRIMARY KEY,
   identificador_interno TEXT UNIQUE,
   nome_contratante TEXT NOT NULL,
+  contato_contratante TEXT NULL,
   local TEXT NOT NULL,
   data_evento TEXT NOT NULL,
   dia_semana TEXT,

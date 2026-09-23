@@ -1,6 +1,6 @@
 # Relatório de testes do parser sem IA
 
-Gerado em: 21/05/2026, 11:59:09
+Gerado em: 22/09/2026, 21:49:46
 
 ## Resumo final
 

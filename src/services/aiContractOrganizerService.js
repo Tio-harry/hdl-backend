@@ -1,3 +1,5 @@
+const { extractContractContact } = require('./contractContact');
+
 const REQUIRED_OUTPUT_KEYS = [
   'nome_contratante',
   'local',
@@ -91,6 +93,7 @@ class AIContractOrganizerError extends Error {
 
 function buildEmptyDados() {
   return {
+    contato_contratante: null,
     nome_contratante: '',
     local: '',
     data_evento: '',
@@ -1086,6 +1089,9 @@ function normalizeAndValidateModelPayload(payload, dateReference = getDateRefere
     dados[key] = cleanString(rawDados[key]);
   }
 
+  // Only accept a phone explicitly associated with the contracting customer.
+  dados.contato_contratante = extractContractContact(textoBruto);
+
   for (const key of NUMBER_KEYS) {
     dados[key] = normalizeMoneyOrNull(rawDados[key]);
   }
@@ -1199,6 +1205,7 @@ function buildSystemPrompt(dateReference = getDateReference()) {
     '7) Estrutura de saída obrigatória:',
     '{ "dados": { ... }, "faltantes": [], "incertos": [], "alertas": [], "confianca": 0.0 }',
     '8) Campos obrigatórios dentro de dados:',
+    'contato_contratante: telefone explicitamente rotulado como Contato/Telefone/WhatsApp/Celular da contratante. Preserve +, parenteses, hifens e codigo de pais. Nao use DDD como criterio, nao copie contato da empresa e nao invente numeros. Ausencia: null.',
     'nome_contratante, local, data_evento, dia_semana, horario_inicio, horario_fim, horario_chegada, qtd_criancas, faixa_etaria, aniversariante, tema, espaco, servico_contratado, valor_total, entrada, saldo, informacoes;',
     'campo opcional em dados: extras (texto dos extras separados por vírgula).',
     '9) Campo opcional de topo permitido: itens_discriminados (array de objetos { "descricao": string, "valor": number|null }).',
@@ -1275,6 +1282,7 @@ function buildContractOrganizerJsonSchema() {
         additionalProperties: false,
         required: [
           'nome_contratante',
+          'contato_contratante',
           'local',
           'data_evento',
           'dia_semana',
@@ -1295,6 +1303,7 @@ function buildContractOrganizerJsonSchema() {
         ],
         properties: {
           nome_contratante: stringField,
+          contato_contratante: { type: ['string', 'null'] },
           local: stringField,
           data_evento: stringField,
           dia_semana: stringField,

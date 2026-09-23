@@ -3,6 +3,8 @@
   return String(value).replace(/\r/g, "").trim();
 }
 
+const { extractContractContact, withoutContractContact } = require('./contractContact');
+
 function normalizeText(value) {
   if (!value) return "";
   return String(value)
@@ -2131,7 +2133,7 @@ function parseLooseContractText(text) {
   });
 }
 
-function parseContractText(text) {
+function parseContractTextWithoutContact(text) {
   const safeText = clean(text);
 
   if (!hasStructuredSections(safeText)) {
@@ -2199,6 +2201,15 @@ function parseContractText(text) {
     entrada: valores.entrada,
     saldo: valores.saldo,
     texto_original: safeText
+  });
+}
+
+function parseContractText(text) {
+  const result = parseContractTextWithoutContact(withoutContractContact(text));
+  return buildParsedResponse({
+    ...result.extracted,
+    contato_contratante: extractContractContact(text),
+    texto_original: clean(text),
   });
 }
 
