@@ -170,7 +170,20 @@ const LOOSE_LOCAL_PREFIX_PATTERNS = [
   /^ponto\s+de\s+refer(?:\w|\W)*?ncia\b\s*/i
 ];
 
+const START_TIME_LABELS = [
+  "horario que inicia", "horario de inicio", "horario inicial",
+  "hora que inicia", "hora de inicio", "inicio"
+];
+
+function isStartTimeLabel(value) {
+  const normalized = normalizeText(value).replace(/\s+/g, " ").trim();
+  return START_TIME_LABELS.some((label) =>
+    normalized === label || normalized.startsWith(`${label}:`) || normalized.startsWith(`${label} `)
+  );
+}
+
 const FORM_LABELS = [
+  ...START_TIME_LABELS,
   ...SERVICE_LABELS,
   ...SPACE_LABELS,
   "nome completo do contratante",
@@ -367,6 +380,7 @@ function normalizeLooseContractInput(text) {
     /local\s+da\s+festa(?:\s*:)?/gi,
     /data\s+da\s+festa(?:\s*:)?/gi,
     /hor\S*rio\s+que\s+inicia(?:\s*:)?/gi,
+    /\b(?:hor[aá]rio\s+(?:de\s+in[ií]cio|inicial)|hora\s+(?:que\s+inicia|de\s+in[ií]cio)|in[ií]cio)\s*:/gi,
     /detalhes\s+que\s+(?:seja|sejam|seria)\s+importante\s+mencionar[^:]*:/gi,
     /qual\s+o\s+servi\S*o\s+contratado\s*\??/gi,
     /\bvalor(?:\s*:)?/gi,
@@ -463,6 +477,7 @@ function formatLooseLocalValue(value) {
 }
 
 function isLikelyStopLineForLooseLocal(line) {
+  if (isStartTimeLabel(line)) return true;
   const normalized = normalizeText(line);
   return (
     !normalized ||
@@ -952,7 +967,9 @@ function normalizeHourToken(token, fullSourceText = "") {
     .toLowerCase()
     .replace(/\s/g, "")
     .replace("hrs", "h")
-    .replace("hr", "h");
+    .replace("hr", "h")
+    .replace(/horas?$/, "h")
+    .replace(/^(\d{1,2})h(\d{2})$/, "$1:$2");
 
   const sourceNormalized = normalizeText(fullSourceText);
 
@@ -996,7 +1013,7 @@ function normalizeHourToken(token, fullSourceText = "") {
   if (/^\d{1,2}:\d{2}$/.test(value)) {
     const [hour, minute] = value.split(":");
     const h = adjustHour(hour);
-    if (h === null) return "";
+    if (h === null || Number(minute) > 59) return "";
     return `${String(h).padStart(2, "0")}:${minute}`;
   }
 
@@ -1008,9 +1025,12 @@ function extractTimes(value) {
 
   const normalized = String(value)
     .replace(/Ã s/gi, " as ")
-    .replace(/\s+/g, " ");
+    .replace(/\s+/g, " ")
+    // Durations describe the service, not its starting time.
+    .replace(/\b(?:dura[çc][aã]o\s*:?|durante|por)\s*\d{1,2}\s*(?:horas?|hrs?|h)\b/gi, " ")
+    .replace(/\b\d{1,2}\s*(?:horas?|hrs?|h)\s+de\s+(?:servi[çc]o|recrea[çc][aã]o|dura[çc][aã]o)\b/gi, " ");
 
-  const matches = normalized.match(/\b\d{1,2}(?::\d{2})?\s*h\b|\b\d{1,2}:\d{2}\b/gi) || [];
+  const matches = normalized.match(/(?<![\d.,:/])\b\d{1,2}(?:\s*h\s*\d{2}|(?::\d{2})?\s*(?:horas?|hrs?|h)|:\d{2})\b/gi) || [];
 
   return matches
     .map((item) => normalizeHourToken(item, value))
@@ -1504,6 +1524,7 @@ const LOOSE_NAME_FORBIDDEN_LABELS = [
 ];
 
 function isForbiddenLooseNameValue(value) {
+  if (isStartTimeLabel(value)) return true;
   const normalized = normalizeText(cleanExtractedValue(value)).replace(/[:\s]+$/g, "").trim();
   if (!normalized) return true;
 
@@ -1734,6 +1755,7 @@ function extractLooseHorario(text) {
 
   const labeled =
     pickLooseByLabel(text, [
+      ...START_TIME_LABELS,
       "horÃ¡rio",
       "horario",
       "horÃ¡rio do evento",
@@ -2161,7 +2183,7 @@ function parseContractTextWithoutContact(text) {
   const diaSemana = calculateWeekday(dataEvento);
 
   const horarioRaw =
-    pickByLabel(dadosEventoSection, ["horÃ¡rio", "horario"]) ||
+    pickByLabel(dadosEventoSection, [...START_TIME_LABELS, "horÃ¡rio", "horario"]) ||
     "";
 
   const horario = buildHorarioFromSource(horarioRaw);

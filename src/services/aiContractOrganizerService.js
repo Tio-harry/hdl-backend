@@ -161,7 +161,7 @@ function normalizeHora(value) {
     }
   }
 
-  const withHsOrHours = raw.match(/^(\d{1,2})\s*(h|hs|hora|horas)$/i);
+  const withHsOrHours = raw.match(/^(\d{1,2})\s*(h|hs|hr|hrs|hora|horas)$/i);
   if (withHsOrHours) {
     const hh = Number(withHsOrHours[1]);
     if (hh >= 0 && hh <= 23) return `${String(hh).padStart(2, '0')}:00`;
@@ -1215,7 +1215,7 @@ function buildSystemPrompt(dateReference = getDateReference()) {
     '13) data_evento: aceitar 15/03, 15-03, 15.03, dia 15/03, 15/03/2026, 15 de março, sábado 15/03. Formato final DD/MM/AAAA.',
     '14) Se ano não vier na data, assumir ano atual e registrar alerta "Ano do evento não informado; assumido automaticamente como [ano].".',
     '15) dia_semana: calcular pela data_evento em português quando possível.',
-    '16) horario_inicio e horario_fim: aceitar 15h, 15 hs, 15 horas, 15:00, 15.00, às 15, das 15 às 18, 15h às 18h; saída HH:MM.',
+    '16) horario_inicio e horario_fim: aceitar 15hrs, 15hr, 15h, 15 hs, 15 horas, 15h00, 15h30, 15:00, 15.00, 8hrs, 8h30, às 15, das 15 às 18, 15h às 18h; saída HH:MM. Reconhecer os rótulos Horário que inicia, Horário de início, Horário inicial, Hora que inicia, Hora de início e Início, com ou sem acentos.',
     '17) Se só existir horário inicial, horario_fim = +3h e registrar alerta "Horário final não informado; assumida duração padrão de 3 horas.".',
     '18) horario_chegada: sempre 20 minutos antes de horario_inicio.',
     '19) contato_hora_do_lazer, se existir no schema do contexto, deve ser sempre "(81) 99761-7476".',
