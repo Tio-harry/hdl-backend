@@ -29,6 +29,7 @@ async function main() {
     const sql = fs.readFileSync(path.join(__dirname, '../db/migrations/001_noite_natal.sql'), 'utf8');
     await db.query(sql);
     await db.query(sql);
+    await db.query(fs.readFileSync(path.join(__dirname, '../db/migrations/002_funcoes_equipe.sql'), 'utf8'));
     console.log('PASS migration aditiva e idempotente em banco isolado');
     const salt = crypto.randomBytes(16).toString('hex');
     const password = 'Teste-Natal-Local-2026';
@@ -168,6 +169,7 @@ async function main() {
     assert.equal(JSON.stringify((await db.query('SELECT * FROM pagamentos_escala_colaborador ORDER BY id')).rows), paymentBefore);
     console.log('PASS correcao manual transacional sem mudar dados oficiais; contato somente leitura; edicao posterior preserva classificacao');
     console.log('PASS classificacao autenticada/confirmada/idempotente; mesmo evento; somente FK muda no evento e contrato; financeiro/horarios/endereco/escala intactos');
+    await require('./testFuncoesEquipe')({ db, request, base, hash });
     if (process.argv.includes('--serve')) {
       // Restore only the synthetic legacy fixture for the browser confirmation flow.
       await db.query('UPDATE eventos SET servico_principal_id=NULL WHERE id=$1', [legacy.id]);

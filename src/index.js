@@ -24,6 +24,8 @@ const { createAdminUsersRouter } = require('./routes/adminUsersRoutes');
 const { createHomeSummaryRouter } = require('./routes/homeSummaryRoutes');
 const { createAutomaticBackupRouter } = require('./routes/automaticBackupRoutes');
 const { createNatalRouter } = require('./routes/natalRoutes');
+const { createFuncoesEquipeRouter } = require('./routes/funcoesEquipeRoutes');
+const { validarFuncaoEscala } = require('./services/funcoesEquipeService');
 const { resolvePrincipal } = require('./services/natalService');
 const { startAutomaticBackupScheduler } = require('./services/automaticBackupScheduler');
 const { bootstrapInitialGestor, ensureAuthSchema } = require('./services/authService');
@@ -44,6 +46,7 @@ app.use(createAdminUsersRouter());
 app.use(createHomeSummaryRouter());
 app.use(createAutomaticBackupRouter());
 app.use(createNatalRouter());
+app.use(createFuncoesEquipeRouter());
 
 const CONTRACT_INSERT_FIELDS = [
   'servico_principal_id',
@@ -6442,6 +6445,7 @@ app.post('/eventos/:id/escalas', async (req, res) => {
         ? String(colab.rows[0].id_recreador).trim()
         : null;
     const valorRecreador = normalizeEscalaEventoValue('valor_recreador', req.body.valor_recreador);
+    const funcao = await validarFuncaoEscala(pool, req.body.funcao ?? 'Recreador');
 
     const result = await pool.query(`
       INSERT INTO escala_eventos (
@@ -6465,7 +6469,7 @@ app.post('/eventos/:id/escalas', async (req, res) => {
       colaboradorNome,
       idRecreador,
       valorRecreador,
-      req.body.funcao || 'Recreador',
+      funcao,
       req.body.status_pagamento || 'Pendente',
       req.body.status_aceite || 'Pendente',
       normalizeEscalaEventoValue('observacao_escala', req.body.observacao_escala)
@@ -6486,7 +6490,7 @@ app.put('/escalas-evento/:id', async (req, res) => {
 
     const existingEscala = await pool.query(
       `
-      SELECT id, evento_id, colaborador_id, colaborador_nome, status_aceite
+      SELECT id, evento_id, colaborador_id, colaborador_nome, status_aceite, funcao
       FROM escala_eventos
       WHERE id = $1
       `,
@@ -6497,6 +6501,9 @@ app.put('/escalas-evento/:id', async (req, res) => {
     }
     const escalaAnterior = existingEscala.rows[0];
     const eventoIdAnterior = escalaAnterior.evento_id;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'funcao')) {
+      req.body.funcao = await validarFuncaoEscala(pool, req.body.funcao, escalaAnterior.funcao);
+    }
 
     if (
       Object.prototype.hasOwnProperty.call(req.body, 'colaborador_nome') ||
