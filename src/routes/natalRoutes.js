@@ -1,11 +1,19 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requireRole } = require('../middleware/authMiddleware');
-const { readOperation, saveOperation, classifyVisit } = require('../services/natalService');
+const { readOperation, saveOperation, classifyVisit, changeEventPrincipal } = require('../services/natalService');
 
 function createNatalRouter() {
   const router = express.Router();
   router.use('/noite-de-natal', requireAuth, requireRole(['gestor', 'operador']));
+  router.patch('/eventos/:eventoId/classificacao-servico', requireAuth, requireRole(['gestor', 'operador']), async (req, res) => {
+    try {
+      const dados = await changeEventPrincipal(pool, req.params.eventoId, { explicit: req.body?.servico_principal_id });
+      res.json({ ok: true, dados });
+    } catch (error) {
+      res.status(error.status || 500).json({ ok: false, message: error.status ? error.message : 'Nao foi possivel salvar a classificacao.' });
+    }
+  });
   const handle = (save) => async (req, res) => {
     try {
       const year = Number(req.params.ano);

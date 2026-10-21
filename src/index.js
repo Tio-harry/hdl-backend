@@ -7842,22 +7842,24 @@ app.put('/contracts/:id', async (req, res) => {
 
   try {
     const { id } = req.params;
-    if (Object.prototype.hasOwnProperty.call(req.body, 'servico_principal_id') ||
-      Object.prototype.hasOwnProperty.call(req.body, 'servico_contratado')) {
-      req.body.servico_principal_id = await resolvePrincipal(client, req.body.servico_contratado, req.body.servico_principal_id);
-    }
-    const updateFields = getProvidedFields(req.body, CONTRACT_UPDATE_FIELDS);
-
-    if (!updateFields.length) {
+    if (!getProvidedFields(req.body, CONTRACT_UPDATE_FIELDS).length) {
       return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar' });
     }
+    await client.query('BEGIN');
+    const { rows: [existing] } = await client.query('SELECT * FROM contracts WHERE id=$1 FOR UPDATE', [id]);
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ ok: false, erro: 'Contrato nao encontrado' });
+    }
+    req.body.servico_principal_id = await resolvePrincipal(client,
+      req.body.servico_contratado ?? existing.servico_contratado,
+      req.body.servico_principal_id, existing.servico_principal_id);
+    const updateFields = getProvidedFields(req.body, CONTRACT_UPDATE_FIELDS);
 
     const setClause = updateFields
       .map((field, index) => `${field} = $${index + 1}`)
       .join(', ');
     const values = updateFields.map((field) => normalizeContractValue(field, req.body[field]));
-
-    await client.query('BEGIN');
 
     const result = await client.query(`
       UPDATE contracts

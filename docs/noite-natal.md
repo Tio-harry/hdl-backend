@@ -38,7 +38,7 @@ alocacao no ano anterior antes de alocar no novo.
 Codigos: `natal_papai_noel`, `natal_papai_noel_duende`, `natal_noite_visita`.
 A migration aborta se os nomes seed estiverem ausentes, duplicados ou em conflito.
 Novos contratos resolvem nome normalizado EXATO contra catalogo ativo, somente
-se unico; descricao livre nao e adivinhada. ID explicito e validado. Texto de
+se unico, ou alias explicito versionado; descricao livre nao e adivinhada. ID explicito e validado. Texto de
 contrato/PDF e preservado. Legados nao sao classificados em massa. O detalhe
 do evento oferece selecao manual do servico principal para revisao.
 
@@ -195,3 +195,49 @@ No navegador, atualizar a pagina e validar outubro/novembro/dezembro, detalhe
 de evento e filtros. Em Noite de Natal, revisar o evento legado e somente entao
 confirmar sua classificacao. Conferir mesmo evento, texto/horarios/valores e
 persistencia apos refresh. Testar os temas claro/escuro e mobile.
+
+## Refinamento de classificacao e leitura operacional
+
+Preflight local confirmou as bases 24fedfed (backend) e 10bf476 (frontend),
+sem alteracoes preexistentes alem de .codex_portal_tmp/ no frontend.
+Nao exige schema: utiliza os vinculos da migration 001 ja existente.
+Nenhuma migration foi criada ou aplicada ao banco operacional neste bloco;
+a suite reaplica a migration existente apenas ao banco descartavel de testes.
+
+Resolver central em natalService: ID explicito vence (null explicito limpa);
+sem ID enviado, preserva ID existente; somente se ausente tenta catalogo ativo.
+Normaliza caixa, acentos, espacos e pontuacao. Nome oficial ambiguo nao resolve.
+Unico alias aprovado: `Visita Noite de Natal com Papai Noel` -> codigo
+`natal_noite_visita`. Nao usa substring Noel/Natal nem inclui videos.
+POST contrato usa a transacao existente. PUT bloqueia o contrato antes de
+resolver e preserva classificacao manual, propagando o mesmo ID ao evento.
+Nao reclassifica registros antigos em massa.
+
+O select do detalhe anteriormente enviava todo o formulario ao PUT geral,
+que recalculava financeiro e nao sincronizava a classificacao do contrato.
+Agora usa PATCH /eventos/:eventoId/classificacao-servico (gestor/operador),
+body { servico_principal_id: ID ou null }, com a mesma transacao segura da
+acao de revisao. Altera apenas as duas FKs, sem calculos financeiros.
+Salvamentos gerais deste componente nao reenviam mais uma classificacao antiga.
+Label: Classificacao do servico; ajuda: Usada pelo sistema para automacoes e
+organizacao operacional. Estilo local branco/preto e color-scheme light,
+inclusive no tema escuro, sem CSS global.
+
+API Natal le contracts.contato_contratante por consulta vinculada, sem copiar
+ou persistir o contato nas tabelas logisticas. Card revela/copia o numero e
+mostra ausencia quando vazio. Ver evento usa /eventos?eventoId=ID e abre o
+detalhe oficial, nao outra tela. Sem integracao WhatsApp.
+Card prioriza horario/cliente/endereco e chips com funcao/aceite da escala.
+Contagem representa escalados/necessarios, nao aceites confirmados.
+Um estado operacional; financeiro usa getRecebidoOficial/getAReceberOficial:
+total e Pago integralmente quando recebido cobre o total e saldo oficial <=0;
+nos demais casos, total/recebido/saldo. Sem novas formulas ou lancamentos.
+
+QA usa dados sinteticos: 24/12/2026 20:30-20:50, 470 integralmente recebido,
+3/3 escalados com aceites mistos; outros cards com saldo e funcao Recreador.
+Inclui aliases/ambiguidade/precedencia, PATCH manual, persistencia, contato
+read-only, copiar numero, temas, responsividade, Agenda e DND+refresh.
+O teste de mouse espera o limiar de inicio do arraste antes de mover ao destino.
+Os comandos de publicacao da secao anterior continuam validos: atualizar
+backend, checks e restart; atualizar frontend e build. Sem migration/deploy
+executados aqui. Validar o evento 199 real somente apos publicacao autorizada.

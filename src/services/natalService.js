@@ -19,20 +19,27 @@ function eligible(event, year) {
     && event.codigos_operacionais?.includes('natal_noite_visita');
 }
 function normalizeName(value) {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
-async function resolvePrincipal(client, text, explicit) {
+const PRINCIPAL_ALIASES = new Map([['visita noite de natal com papai noel', 'natal_noite_visita']]);
+async function resolvePrincipal(client, text, explicit, existing = null) {
   if (explicit === null || explicit === '') return null;
   if (explicit !== undefined) {
     const { rows } = await client.query('SELECT id FROM servicos WHERE id=$1', [explicit]);
     if (!rows.length) fail('Servico principal inexistente.');
     return rows[0].id;
   }
-  const { rows } = await client.query('SELECT id,nome_servico FROM servicos WHERE ativo=true');
-  const matches = rows.filter((item) => normalizeName(item.nome_servico) === normalizeName(text));
-  return matches.length === 1 ? matches[0].id : null;
+  if (existing) return existing;
+  const { rows } = await client.query('SELECT id,nome_servico,codigo_operacional FROM servicos WHERE ativo=true');
+  const normalized = normalizeName(text);
+  const matches = rows.filter((item) => normalizeName(item.nome_servico) === normalized);
+  if (matches.length) return matches.length === 1 ? matches[0].id : null;
+  const code = PRINCIPAL_ALIASES.get(normalized);
+  const aliases = code ? rows.filter((item) => item.codigo_operacional === code) : [];
+  return aliases.length === 1 ? aliases[0].id : null;
 }
 const EVENT_CODES = `SELECT e.*,
+  (SELECT c.contato_contratante FROM contracts c WHERE c.id=e.contract_id) AS contato_contratante,
   (SELECT count(*)::integer FROM escala_eventos es WHERE es.evento_id=e.id) AS qtd_escalas,
   (SELECT count(*)::integer FROM escala_eventos es WHERE es.evento_id=e.id AND lower(trim(coalesce(es.status_pagamento,'')))='pago') AS qtd_escalas_pagas,
   (SELECT count(*)::integer FROM escala_eventos es WHERE es.evento_id=e.id AND lower(trim(coalesce(es.status_pagamento,'')))<>'pago') AS qtd_escalas_pendentes,
@@ -140,8 +147,7 @@ async function saveOperation(pool, year, body) {
     throw error;
   } finally { client.release(); }
 }
-async function classifyVisit(pool, year, eventId, confirmed) {
-  if (confirmed !== true) fail('Confirme a classificacao da visita.');
+async function changeEventPrincipal(pool, eventId, { year, explicit }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
@@ -150,14 +156,20 @@ async function classifyVisit(pool, year, eventId, confirmed) {
     // Match contract edits' lock order: contract first, then its event.
     if (initial.contract_id) await client.query('SELECT id FROM contracts WHERE id=$1 FOR UPDATE', [initial.contract_id]);
     const { rows: [event] } = await client.query('SELECT * FROM eventos WHERE id=$1 FOR UPDATE', [eventId]);
-    const date = dateParts(event?.data_evento);
-    if (date?.year !== year || date.month !== 12 || date.day !== 24) fail('O evento nao pertence a 24/12 deste ano.', 409);
-    const { rows: services } = await client.query("SELECT id FROM servicos WHERE codigo_operacional='natal_noite_visita' AND ativo=true FOR SHARE");
-    if (services.length !== 1) fail('Catalogo sem uma Visita Noite de Natal ativa e inequivoca.', 409);
-    const serviceId = services[0].id;
+    let serviceId;
+    if (year !== undefined) {
+      const date = dateParts(event?.data_evento);
+      if (date?.year !== year || date.month !== 12 || date.day !== 24) fail('O evento nao pertence a 24/12 deste ano.', 409);
+      const { rows: services } = await client.query("SELECT id FROM servicos WHERE codigo_operacional='natal_noite_visita' AND ativo=true FOR SHARE");
+      if (services.length !== 1) fail('Catalogo sem uma Visita Noite de Natal ativa e inequivoca.', 409);
+      serviceId = services[0].id;
+    } else {
+      if (explicit === undefined) fail('Informe a classificacao do servico.');
+      serviceId = await resolvePrincipal(client, '', explicit);
+    }
     if (event.contract_id) await client.query('UPDATE contracts SET servico_principal_id=$1 WHERE id=$2', [serviceId, event.contract_id]);
     await client.query('UPDATE eventos SET servico_principal_id=$1 WHERE id=$2', [serviceId, eventId]);
-    const result = await readOperation(client, year);
+    const result = year !== undefined ? await readOperation(client, year) : { ...event, servico_principal_id: serviceId };
     await client.query('COMMIT');
     return result;
   } catch (error) {
@@ -166,4 +178,8 @@ async function classifyVisit(pool, year, eventId, confirmed) {
     throw error;
   } finally { client.release(); }
 }
-module.exports = { dateParts, eligible, normalizeName, resolvePrincipal, EVENT_CODES, readOperation, saveOperation, predecessors, classifyVisit };
+async function classifyVisit(pool, year, eventId, confirmed) {
+  if (confirmed !== true) fail('Confirme a classificacao da visita.');
+  return changeEventPrincipal(pool, eventId, { year });
+}
+module.exports = { dateParts, eligible, normalizeName, resolvePrincipal, EVENT_CODES, readOperation, saveOperation, predecessors, classifyVisit, changeEventPrincipal };

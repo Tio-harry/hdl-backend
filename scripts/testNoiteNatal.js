@@ -62,17 +62,36 @@ async function main() {
       nome_contratante: 'Familia de teste Natal', local: 'Rua de teste, 10, Recife', data_evento,
       horario_inicio: '20:00', horario_fim: '20:20', servico_contratado, valor_total: 500, entrada: 250, saldo: 250, ...more,
     }, 'POST');
-    const c1 = await create('24/12/2026');
+    const c1 = await create('24/12/2026', undefined, { contato_contratante: '(81) 99999-0199' });
     assert.equal(c1.servico_principal_id, 'visita');
     const c2 = await create('24/12/2026', undefined, { horario_inicio: '21:00', horario_fim: '21:30' });
     const c3 = await create('24/12/2026', undefined, { horario_inicio: '22:00', horario_fim: '22:40' });
     await create('24/12/2026', 'Recreacao'); await create('23/12/2026', 'Papai Noel'); await create('24/12/2027');
-    const legacyContract = await create('24/12/2026', 'Visita Noite de Natal com Papai Noel', { nome_contratante: 'Legado UAT - Delvany' });
+    const legacyContract = await create('24/12/2026', 'Visita Noite de Natal com Papai Noel', { nome_contratante: 'Legado UAT - Delvany', servico_principal_id: null });
+    for (const [text, expected] of [
+      ['  VISITA Noite de Nátal. ', 'visita'], ['Visita Noite de Natal com Papai Noel', 'visita'],
+      ['Noel', null], ['Video do Papai Noel', null], ['Papai Noel', 'noel'], ['Papai Noel com Duende', 'duende'],
+    ]) {
+      const c = await create('24/12/2031', text);
+      assert.equal(c.servico_principal_id, expected, text);
+      assert.equal((await db.query('SELECT servico_principal_id FROM eventos WHERE contract_id=$1', [c.id])).rows[0].servico_principal_id, expected);
+    }
+    const precedence = await create('24/12/2031', 'Visita Noite de Natal com Papai Noel', { servico_principal_id: 'duende' });
+    assert.equal(precedence.servico_principal_id, 'duende');
+    assert.equal((await request(`/contracts/${precedence.id}`, { servico_contratado: 'Papai Noel' })).servico_principal_id, 'duende');
+    assert.equal((await request(`/contracts/${precedence.id}`, { servico_principal_id: 'noel' })).servico_principal_id, 'noel');
+    assert.equal((await request(`/contracts/${precedence.id}`, { servico_principal_id: null })).servico_principal_id, null);
+    assert.equal((await request(`/contracts/${precedence.id}`, { tema: 'Teste' })).servico_principal_id, 'noel');
+    await db.query("INSERT INTO servicos(id,nome_servico,ativo) VALUES('duplicate-test','Papai Noel',true)");
+    assert.equal((await create('24/12/2031', 'Papai Noel')).servico_principal_id, null);
+    await db.query("DELETE FROM servicos WHERE id='duplicate-test'");
+    console.log('PASS nomes normalizados, alias explicito, textos genericos excluidos, ambiguidade, precedencia explicito/existente/automatico');
     await request(`/contracts/${c2.id}`, { horario_fim: '21:40' });
     const events = await request('/eventos');
     const e1 = events.find((e) => e.contract_id === c1.id), e2 = events.find((e) => e.contract_id === c2.id), e3 = events.find((e) => e.contract_id === c3.id);
     assert.equal(e1.servico_principal_id, 'visita'); assert.equal(e2.hora_fim, '21:40');
     let state = await request('/noite-de-natal/2026');
+    assert.equal(state.eventos.find((e) => e.id === e1.id).contato_contratante, '(81) 99999-0199');
     assert.equal(state.eventos.length, 3); assert.equal(state.revisao.length, 2);
     assert.equal((await request('/noite-de-natal/2027')).eventos.length, 1);
     const comum = events.find((e) => e.servico_principal_id === 'comum');
@@ -134,6 +153,20 @@ async function main() {
     assert.equal(JSON.stringify((await db.query('SELECT * FROM escala_eventos ORDER BY id')).rows), scalesBefore);
     assert.equal(JSON.stringify((await db.query('SELECT * FROM pagamentos_escala_colaborador ORDER BY id')).rows), paymentBefore);
     await request(classificationPath, { confirmado: true }, 'POST');
+    const manualPath = `/eventos/${legacy.id}/classificacao-servico`;
+    assert.equal((await fetch(`${base}${manualPath}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ servico_principal_id: 'noel' }) })).status, 401);
+    await request(manualPath, { servico_principal_id: 'missing' }, 'PATCH', 400);
+    await request(manualPath, { servico_principal_id: 'noel', valor_total: 1, hora_inicio: '00:00', contato_contratante: 'NAO SALVAR' }, 'PATCH');
+    assert.deepEqual((await db.query('SELECT * FROM eventos WHERE id=$1', [legacy.id])).rows[0], { ...legacy, servico_principal_id: 'noel' });
+    assert.deepEqual((await db.query('SELECT * FROM contracts WHERE id=$1', [legacyContract.id])).rows[0], { ...legacyBefore, servico_principal_id: 'noel' });
+    await request(`/contracts/${legacyContract.id}`, { tema: 'Preserva classificacao manual' });
+    assert.equal((await db.query('SELECT servico_principal_id FROM eventos WHERE id=$1', [legacy.id])).rows[0].servico_principal_id, 'noel');
+    state = await request('/noite-de-natal/2026');
+    await save({ contato_contratante: 'NAO SALVAR', visitas: state.visitas.map((v) => ({ ...v, contato_contratante: 'NAO SALVAR' })) });
+    assert.equal((await db.query('SELECT contato_contratante FROM contracts WHERE id=$1', [c1.id])).rows[0].contato_contratante, '(81) 99999-0199');
+    assert.equal(JSON.stringify((await db.query('SELECT * FROM escala_eventos ORDER BY id')).rows), scalesBefore);
+    assert.equal(JSON.stringify((await db.query('SELECT * FROM pagamentos_escala_colaborador ORDER BY id')).rows), paymentBefore);
+    console.log('PASS correcao manual transacional sem mudar dados oficiais; contato somente leitura; edicao posterior preserva classificacao');
     console.log('PASS classificacao autenticada/confirmada/idempotente; mesmo evento; somente FK muda no evento e contrato; financeiro/horarios/endereco/escala intactos');
     if (process.argv.includes('--serve')) {
       // Restore only the synthetic legacy fixture for the browser confirmation flow.
@@ -150,8 +183,14 @@ async function main() {
           if (contract.id === c.id) await db.query("UPDATE eventos SET status_financeiro='Finalizado',sinal=500,sinal_confirmado=true,dt_pagamento_sinal='20/10/2026',resta=0 WHERE id=$1", [id]);
         }
       }
-      await db.query("UPDATE eventos SET qtd_recreadores=1,status_financeiro='Finalizado',sinal=500,sinal_confirmado=true,dt_pagamento_sinal='20/12/2026',resta=0 WHERE id=$1", [e1.id]);
+      await db.query("UPDATE eventos SET qtd_recreadores=3,hora_inicio='20:30',hora_fim='20:50',valor_total=470,status_financeiro='Em andamento',sinal=470,sinal_confirmado=true,dt_pagamento_sinal='20/12/2026',resta=0 WHERE id=$1", [e1.id]);
+      await db.query("UPDATE escala_eventos SET status_aceite='Confirmado' WHERE evento_id=$1", [e1.id]);
+      for (const [id, nome, funcao] of [['duende-test','Pink teste','Assistente/Duende'], ['motorista-test','Carlos teste','Motorista']]) {
+        await db.query('INSERT INTO colaboradores(id,nome_colaborador) VALUES($1,$2)', [id, nome]);
+        await db.query("INSERT INTO escala_eventos(id,evento_id,colaborador_id,colaborador_nome,funcao,status_aceite) VALUES($1,$2,$3,$4,$5,'Pendente')", [`scale-${id}`, e1.id, id, nome, funcao]);
+      }
       await db.query('UPDATE eventos SET qtd_recreadores=2 WHERE id=$1', [e2.id]);
+      await db.query("UPDATE escala_eventos SET funcao='Recreador' WHERE evento_id=$1", [e2.id]);
       await db.query('UPDATE eventos SET qtd_recreadores=1 WHERE id=$1', [e3.id]);
       console.log(`QA local: ${base}; usuario natal-test@example.invalid; senha ${password}. Banco descartavel ${name}. Pressione Enter para encerrar e remover SOMENTE este banco.`);
       process.stdin.resume(); await new Promise((resolve) => process.stdin.once('data', resolve)); process.stdin.pause();
