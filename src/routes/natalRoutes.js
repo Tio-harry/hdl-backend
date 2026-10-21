@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requireRole } = require('../middleware/authMiddleware');
-const { readOperation, saveOperation } = require('../services/natalService');
+const { readOperation, saveOperation, classifyVisit } = require('../services/natalService');
 
 function createNatalRouter() {
   const router = express.Router();
@@ -11,7 +11,8 @@ function createNatalRouter() {
       const year = Number(req.params.ano);
       if (!Number.isInteger(year) || year < 2000 || year > 2100) return res.status(400).json({ ok: false, message: 'Ano invalido.' });
       let dados;
-      if (save) dados = await saveOperation(pool, year, req.body);
+      if (save === 'classify') dados = await classifyVisit(pool, year, req.params.eventoId, req.body?.confirmado);
+      else if (save) dados = await saveOperation(pool, year, req.body);
       else {
         const client = await pool.connect();
         try {
@@ -32,6 +33,7 @@ function createNatalRouter() {
   };
   router.get('/noite-de-natal/:ano', handle(false));
   router.put('/noite-de-natal/:ano', handle(true));
+  router.post('/noite-de-natal/:ano/eventos/:eventoId/classificar', handle('classify'));
   return router;
 }
 module.exports = { createNatalRouter };

@@ -67,7 +67,7 @@ async function main() {
     const c2 = await create('24/12/2026', undefined, { horario_inicio: '21:00', horario_fim: '21:30' });
     const c3 = await create('24/12/2026', undefined, { horario_inicio: '22:00', horario_fim: '22:40' });
     await create('24/12/2026', 'Recreacao'); await create('23/12/2026', 'Papai Noel'); await create('24/12/2027');
-    await create('24/12/2026', 'Texto livre Noel sem correspondencia');
+    const legacyContract = await create('24/12/2026', 'Visita Noite de Natal com Papai Noel', { nome_contratante: 'Legado UAT - Delvany' });
     await request(`/contracts/${c2.id}`, { horario_fim: '21:40' });
     const events = await request('/eventos');
     const e1 = events.find((e) => e.contract_id === c1.id), e2 = events.find((e) => e.contract_id === c2.id), e3 = events.find((e) => e.contract_id === c3.id);
@@ -116,7 +116,40 @@ async function main() {
     assert.equal(state.visitas.some((v) => v.evento_id === e3.id), false);
     await db.query("UPDATE eventos SET data_evento='24/12/2026' WHERE id=$1", [e3.id]);
     console.log('PASS alocacao inelegivel exige confirmacao explicita; evento preservado');
+    const legacy = (await db.query('SELECT * FROM eventos WHERE contract_id=$1', [legacyContract.id])).rows[0];
+    const classificationPath = `/noite-de-natal/2026/eventos/${legacy.id}/classificar`;
+    assert.equal((await fetch(`${base}${classificationPath}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmado: true }) })).status, 401);
+    await request(classificationPath, {}, 'POST', 400);
+    await request(`/noite-de-natal/2027/eventos/${legacy.id}/classificar`, { confirmado: true }, 'POST', 409);
+    await db.query("UPDATE servicos SET ativo=false WHERE id='visita'");
+    await request(classificationPath, { confirmado: true }, 'POST', 409);
+    await db.query("UPDATE servicos SET ativo=true WHERE id='visita'");
+    const legacyBefore = (await db.query('SELECT * FROM contracts WHERE id=$1', [legacyContract.id])).rows[0];
+    const classified = await request(classificationPath, { confirmado: true }, 'POST');
+    assert.ok(classified.eventos.some((e) => e.id === legacy.id));
+    assert.ok(!classified.revisao.some((e) => e.id === legacy.id));
+    const legacyAfter = (await db.query('SELECT * FROM eventos WHERE id=$1', [legacy.id])).rows[0];
+    assert.deepEqual(legacyAfter, { ...legacy, servico_principal_id: 'visita' });
+    assert.deepEqual((await db.query('SELECT * FROM contracts WHERE id=$1', [legacyContract.id])).rows[0], { ...legacyBefore, servico_principal_id: 'visita' });
+    assert.equal(JSON.stringify((await db.query('SELECT * FROM escala_eventos ORDER BY id')).rows), scalesBefore);
+    assert.equal(JSON.stringify((await db.query('SELECT * FROM pagamentos_escala_colaborador ORDER BY id')).rows), paymentBefore);
+    await request(classificationPath, { confirmado: true }, 'POST');
+    console.log('PASS classificacao autenticada/confirmada/idempotente; mesmo evento; somente FK muda no evento e contrato; financeiro/horarios/endereco/escala intactos');
     if (process.argv.includes('--serve')) {
+      // Restore only the synthetic legacy fixture for the browser confirmation flow.
+      await db.query('UPDATE eventos SET servico_principal_id=NULL WHERE id=$1', [legacy.id]);
+      await db.query('UPDATE contracts SET servico_principal_id=NULL WHERE id=$1', [legacyContract.id]);
+      for (const month of ['10', '11']) {
+        const a = await create(`24/${month}/2026`, 'Recreacao', { nome_contratante: `UAT ${month} equipe incompleta`, qtd_recreadores: 2 });
+        const b = await create(`24/${month}/2026`, 'Recreacao', { nome_contratante: `UAT ${month} conflito`, qtd_recreadores: 1 });
+        const c = await create(`25/${month}/2026`, 'Recreacao', { nome_contratante: `UAT ${month} completo`, qtd_recreadores: 1 });
+        for (const contract of [a, b, c]) {
+          const id = (await db.query('SELECT id FROM eventos WHERE contract_id=$1', [contract.id])).rows[0].id;
+          await db.query('UPDATE eventos SET qtd_recreadores=$1 WHERE id=$2', [contract.id === a.id ? 2 : 1, id]);
+          await db.query("INSERT INTO escala_eventos(id,evento_id,colaborador_id,colaborador_nome,funcao,valor_recreador,status_aceite,status_pagamento) VALUES($1,$2,'noel-test','Noel teste','Recreador',100,'Confirmado','Pago')", [`scale-${id}`, id]);
+          if (contract.id === c.id) await db.query("UPDATE eventos SET status_financeiro='Finalizado',sinal=500,sinal_confirmado=true,dt_pagamento_sinal='20/10/2026',resta=0 WHERE id=$1", [id]);
+        }
+      }
       await db.query("UPDATE eventos SET qtd_recreadores=1,status_financeiro='Finalizado',sinal=500,sinal_confirmado=true,dt_pagamento_sinal='20/12/2026',resta=0 WHERE id=$1", [e1.id]);
       await db.query('UPDATE eventos SET qtd_recreadores=2 WHERE id=$1', [e2.id]);
       await db.query('UPDATE eventos SET qtd_recreadores=1 WHERE id=$1', [e3.id]);

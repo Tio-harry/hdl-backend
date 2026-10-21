@@ -140,4 +140,30 @@ async function saveOperation(pool, year, body) {
     throw error;
   } finally { client.release(); }
 }
-module.exports = { dateParts, eligible, normalizeName, resolvePrincipal, EVENT_CODES, readOperation, saveOperation, predecessors };
+async function classifyVisit(pool, year, eventId, confirmed) {
+  if (confirmed !== true) fail('Confirme a classificacao da visita.');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+    const { rows: [initial] } = await client.query('SELECT contract_id FROM eventos WHERE id=$1', [eventId]);
+    if (!initial) fail('Evento nao encontrado.', 404);
+    // Match contract edits' lock order: contract first, then its event.
+    if (initial.contract_id) await client.query('SELECT id FROM contracts WHERE id=$1 FOR UPDATE', [initial.contract_id]);
+    const { rows: [event] } = await client.query('SELECT * FROM eventos WHERE id=$1 FOR UPDATE', [eventId]);
+    const date = dateParts(event?.data_evento);
+    if (date?.year !== year || date.month !== 12 || date.day !== 24) fail('O evento nao pertence a 24/12 deste ano.', 409);
+    const { rows: services } = await client.query("SELECT id FROM servicos WHERE codigo_operacional='natal_noite_visita' AND ativo=true FOR SHARE");
+    if (services.length !== 1) fail('Catalogo sem uma Visita Noite de Natal ativa e inequivoca.', 409);
+    const serviceId = services[0].id;
+    if (event.contract_id) await client.query('UPDATE contracts SET servico_principal_id=$1 WHERE id=$2', [serviceId, event.contract_id]);
+    await client.query('UPDATE eventos SET servico_principal_id=$1 WHERE id=$2', [serviceId, eventId]);
+    const result = await readOperation(client, year);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.code === '40001') fail('O evento mudou em outra sessao. Atualize e confira antes de classificar.', 409);
+    throw error;
+  } finally { client.release(); }
+}
+module.exports = { dateParts, eligible, normalizeName, resolvePrincipal, EVENT_CODES, readOperation, saveOperation, predecessors, classifyVisit };

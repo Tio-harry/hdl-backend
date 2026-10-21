@@ -146,3 +146,52 @@ Padrao de20min nao aplicado: o parser determina o fim ANTES da resolucao do
 catalogo. Preservado default3h e duracao explicitamente contratada. Revisar o
 horario na origem antes da operacao. Maps, distancia automatica, PDFs natalinos,
 videos, snapshots financeiros e historico detalhado de custos ficam fora.
+
+## Correcao e UAT posterior a publicacao
+
+Reproduzido antes de editar, em navegador Chrome com API/banco descartavel:
+`ReferenceError: alertaColaboradorObrigatorio is not defined`.
+Stack: `renderEventoCard (AgendaEventos.jsx:798:13)` no modulo transformado
+pelo Vite, chamado por `children -> Draggable -> renderWithHooks`.
+No fonte publicado, o uso sem declaracao estava em `AgendaEventos.jsx:878`.
+O commit 22854ea removeu a declaracao local, mas manteve o badge Custo equipe.
+Meses recolhidos nao chamavam renderEventoCard, por isso so expandir disparava
+o erro e deixava body vazio. Corrigido recuperando o mesmo campo do helper.
+As regras/cores do helper nao mudaram. O QA anterior nao expandia meses;
+o QA atualizado expande outubro/novembro/dezembro, verifica cards e cores,
+abre detalhe, testa filtros e falha em pageerror e console.error apos login.
+O 401 inicial de sessao anonima e esperado; nao sao ignorados erros React.
+
+Nova acao: `POST /noite-de-natal/:ano/eventos/:eventoId/classificar`, body
+`{ "confirmado": true }`. Exige a mesma sessao/perfil gestor ou operador.
+Resolve exclusivamente codigo `natal_noite_visita` ativo, nunca substring.
+Transacao SERIALIZABLE bloqueia contrato e evento e altera apenas
+`servico_principal_id` em ambos. Nao muda texto, identidade, valores, endereco,
+horarios, escala ou pagamentos. Evento deve pertencer a 24/12 do ano.
+Catalogo indisponivel ou conflito concorrente retorna 409, sem alteracao parcial.
+Confirmacao cancelavel na area de revisao; offline bloqueia a acao.
+Teste usa legado sintetico semelhante ao caso relatado, nao o dado de producao.
+
+### Publicar SOMENTE esta correcao (migration 001 ja aplicada)
+
+No terminal SSH da VPS, conferir working trees limpos antes de prosseguir:
+```
+cd /var/www/hdl-app/hdl-backend
+git status --short
+git pull --ff-only origin main
+node --check src/index.js
+node --check src/services/natalService.js
+node --check src/routes/natalRoutes.js
+sudo systemctl restart hdl-backend.service
+sudo systemctl status hdl-backend.service --no-pager
+cd /var/www/hdl-app/gest-o-operacional-hora-do-lazer
+git status --short
+git pull --ff-only origin main
+npm run build
+```
+Parar se qualquer comando falhar; nao executar migration novamente para esta
+correcao. Nao houve acesso/mudanca de banco de producao nesta rodada.
+No navegador, atualizar a pagina e validar outubro/novembro/dezembro, detalhe
+de evento e filtros. Em Noite de Natal, revisar o evento legado e somente entao
+confirmar sua classificacao. Conferir mesmo evento, texto/horarios/valores e
+persistencia apos refresh. Testar os temas claro/escuro e mobile.
