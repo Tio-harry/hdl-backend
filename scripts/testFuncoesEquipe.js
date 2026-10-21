@@ -1,6 +1,11 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+if (require.main === module) {
+  // Standalone invocation uses the same isolated DB harness, never an operational DB.
+  const result = require('node:child_process').spawnSync(process.execPath, [path.join(__dirname, 'testNoiteNatal.js')], { stdio: 'inherit' });
+  process.exitCode = result.status ?? 1;
+}
 module.exports = async function testFuncoesEquipe({ db, request, base, hash }) {
   const sql = fs.readFileSync(path.join(__dirname, '../db/migrations/002_funcoes_equipe.sql'), 'utf8');
   await db.query("INSERT INTO eventos(id,contratante_nome,data_evento) VALUES('funcao-history-event','Historico teste','01/01/2032')");

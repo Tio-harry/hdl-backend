@@ -170,6 +170,7 @@ async function main() {
     console.log('PASS correcao manual transacional sem mudar dados oficiais; contato somente leitura; edicao posterior preserva classificacao');
     console.log('PASS classificacao autenticada/confirmada/idempotente; mesmo evento; somente FK muda no evento e contrato; financeiro/horarios/endereco/escala intactos');
     await require('./testFuncoesEquipe')({ db, request, base, hash });
+    await require('./testCustosNatal')({ db, request, base, hash });
     if (process.argv.includes('--serve')) {
       // Restore only the synthetic legacy fixture for the browser confirmation flow.
       await db.query('UPDATE eventos SET servico_principal_id=NULL WHERE id=$1', [legacy.id]);
