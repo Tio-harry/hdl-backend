@@ -23,6 +23,8 @@ const { createAuthRouter } = require('./routes/authRoutes');
 const { createAdminUsersRouter } = require('./routes/adminUsersRoutes');
 const { createHomeSummaryRouter } = require('./routes/homeSummaryRoutes');
 const { createAutomaticBackupRouter } = require('./routes/automaticBackupRoutes');
+const { createNatalRouter } = require('./routes/natalRoutes');
+const { resolvePrincipal } = require('./services/natalService');
 const { startAutomaticBackupScheduler } = require('./services/automaticBackupScheduler');
 const { bootstrapInitialGestor, ensureAuthSchema } = require('./services/authService');
 const { sendMail } = require('./services/emailService');
@@ -41,8 +43,10 @@ app.use(createAuthRouter());
 app.use(createAdminUsersRouter());
 app.use(createHomeSummaryRouter());
 app.use(createAutomaticBackupRouter());
+app.use(createNatalRouter());
 
 const CONTRACT_INSERT_FIELDS = [
+  'servico_principal_id',
   'nome_contratante',
   'contato_contratante',
   'local',
@@ -117,6 +121,7 @@ const RECIBO_FIELDS = [
 const RECIBO_NUMERIC_FIELDS = ['valor'];
 
 const EVENTO_UPDATE_FIELDS = [
+  'servico_principal_id',
   'sinal_confirmado',
   'checklist',
   'observacoes',
@@ -2842,6 +2847,9 @@ app.get('/eventos', async (req, res) => {
     const result = await pool.query(`
       SELECT
         e.*,
+        ARRAY(SELECT DISTINCT s.codigo_operacional FROM servicos s
+          WHERE s.codigo_operacional IS NOT NULL AND (s.id=e.servico_principal_id OR s.id IN
+            (SELECT se.servico_id FROM servico_eventos se WHERE se.evento_id=e.id))) AS codigos_operacionais,
         COALESCE(esc.qtd_escalas, 0) AS qtd_escalas,
         COALESCE(esc.qtd_escalas_pagas, 0) AS qtd_escalas_pagas,
         COALESCE(esc.qtd_escalas_pendentes, 0) AS qtd_escalas_pendentes,
@@ -2872,6 +2880,9 @@ app.get('/eventos', async (req, res) => {
 
 app.put('/eventos/:id', async (req, res) => {
   try {
+    if (Object.prototype.hasOwnProperty.call(req.body, 'servico_principal_id')) {
+      req.body.servico_principal_id = await resolvePrincipal(pool, '', req.body.servico_principal_id);
+    }
     const updateFields = getProvidedFields(req.body, EVENTO_UPDATE_FIELDS);
 
     if (!updateFields.length) {
@@ -7743,6 +7754,7 @@ for (const row of ultimo.rows) {
     const identificador_interno = `ID ${String(nextIdNumber).padStart(2, '0')}`;
     const id = crypto.randomUUID();
 
+    req.body.servico_principal_id = await resolvePrincipal(client, servico_contratado, req.body.servico_principal_id);
     const insertFields = CONTRACT_INSERT_FIELDS.filter((field) =>
       ['nome_contratante', 'local', 'data_evento', 'horario_inicio', 'servico_contratado'].includes(field) ||
       Object.prototype.hasOwnProperty.call(req.body, field)
@@ -7788,9 +7800,10 @@ for (const row of ultimo.rows) {
         resta,
         qtd_recreadores,
         status_financeiro,
-        observacoes
+        observacoes,
+        servico_principal_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
     `, [
       eventoId,
       contract.id,
@@ -7809,7 +7822,8 @@ for (const row of ultimo.rows) {
       calculateContractResta(contract),
       eventoQtdRecreadores,
       'Em andamento',
-      buildContractEventoObservacoes(contract)
+      buildContractEventoObservacoes(contract),
+      contract.servico_principal_id
     ]);
 
     await client.query('COMMIT');
@@ -7828,6 +7842,10 @@ app.put('/contracts/:id', async (req, res) => {
 
   try {
     const { id } = req.params;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'servico_principal_id') ||
+      Object.prototype.hasOwnProperty.call(req.body, 'servico_contratado')) {
+      req.body.servico_principal_id = await resolvePrincipal(client, req.body.servico_contratado, req.body.servico_principal_id);
+    }
     const updateFields = getProvidedFields(req.body, CONTRACT_UPDATE_FIELDS);
 
     if (!updateFields.length) {
@@ -7876,7 +7894,8 @@ app.put('/contracts/:id', async (req, res) => {
         valor_total = $11,
         sinal = $12,
         resta = $13,
-        qtd_recreadores = $14
+        qtd_recreadores = $14,
+        servico_principal_id = $16
       WHERE contract_id = $15
     `, [
       contract.identificador_interno,
@@ -7893,7 +7912,8 @@ app.put('/contracts/:id', async (req, res) => {
       moneyOrZero(contract.entrada),
       calculateContractResta(contract),
       qtdParaUpdate,
-      contract.id
+      contract.id,
+      contract.servico_principal_id
     ]);
 
     await client.query('COMMIT');
