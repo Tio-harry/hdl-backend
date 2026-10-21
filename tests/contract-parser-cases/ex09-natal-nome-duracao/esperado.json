@@ -1,0 +1,11 @@
+{
+  "nome_contratante": "Cliente Teste Natal",
+  "data_evento": "24/12/2026",
+  "horario_inicio": "20:30",
+  "horario_fim": "20:50",
+  "horario_chegada": "20:10",
+  "servico_contratado": "Visita Noite de Natal com Papai Noel",
+  "valor_total": 470,
+  "entrada": 235,
+  "saldo": 235
+}

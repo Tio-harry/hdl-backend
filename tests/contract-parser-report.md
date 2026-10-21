@@ -1,11 +1,11 @@
 # Relatório de testes do parser sem IA
 
-Gerado em: 21/10/2026, 12:02:25
+Gerado em: 21/10/2026, 12:55:51
 
 ## Resumo final
 
-- Total de casos: 8
-- Quantidade OK: 8
+- Total de casos: 9
+- Quantidade OK: 9
 - Quantidade com falha: 0
 
 ### Campos que mais falharam
@@ -186,6 +186,23 @@ Gerado em: 21/10/2026, 12:02:25
   - tema
   - servico_contratado
   - extras
+  - valor_total
+  - entrada
+  - saldo
+- Campos com erro:
+  - Nenhum
+
+## ex09-natal-nome-duracao
+
+- Status geral: **OK**
+- Campos comparados: nome_contratante, data_evento, horario_inicio, horario_fim, horario_chegada, servico_contratado, valor_total, entrada, saldo
+- Campos OK:
+  - nome_contratante
+  - data_evento
+  - horario_inicio
+  - horario_fim
+  - horario_chegada
+  - servico_contratado
   - valor_total
   - entrada
   - saldo

@@ -1,0 +1,6 @@
+Nome: Cliente Teste Natal
+Endereço: Rua Teste, 10, Recife
+Data: 24/12/2026
+Horário: 20:30
+Serviço: Visita Noite de Natal com Papai Noel
+Valor: 470,00

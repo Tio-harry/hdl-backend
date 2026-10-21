@@ -719,7 +719,9 @@ function applyLengthLimitsServicoEItens(dados, itensDiscriminados) {
 }
 
 function inferRegiaoAtendimento(localText, textoBruto) {
-  const combined = `${cleanString(localText)}\n${cleanString(textoBruto)}`;
+  // Names/services containing "Natal" are not evidence of the event's city.
+  const addressLine = cleanString(textoBruto).split(/\r?\n/).find((line) => /^(?:local|endere[cç]o)(?: da festa| do evento)?\s*:/i.test(line.trim()));
+  const combined = cleanString(localText) || cleanString(addressLine);
   if (!combined.trim()) {
     return {
       empresa_atendimento: DEFAULT_EMPRESA_ATENDIMENTO,
@@ -1130,6 +1132,13 @@ function normalizeAndValidateModelPayload(payload, dateReference = getDateRefere
     normalizedItensDiscriminados,
     alertas
   );
+  // A single unpriced service can use the explicitly stated total, not an inferred price.
+  const statedTotal = textoBruto.match(/^\s*valor(?:\s+total)?\s*:\s*(?:R\$\s*)?([\d.,]+)\s*$/im);
+  if (normalizedItensDiscriminados.length === 1 && normalizedItensDiscriminados[0].valor === null
+      && /^(?:sem extras|n[aã]o informado)?$/i.test(cleanString(dados.extras))
+      && statedTotal && normalizeMoneyOrNull(statedTotal[1]) === dados.valor_total) {
+    normalizedItensDiscriminados[0].valor = dados.valor_total;
+  }
   reconcileValorTotalFromItens(dados, normalizedItensDiscriminados, alertas);
 
   if (dados.valor_total !== null && dados.entrada === null && dados.saldo === null && !deterministicFinanceApplied) {
@@ -1216,7 +1225,7 @@ function buildSystemPrompt(dateReference = getDateReference()) {
     '14) Se ano não vier na data, assumir ano atual e registrar alerta "Ano do evento não informado; assumido automaticamente como [ano].".',
     '15) dia_semana: calcular pela data_evento em português quando possível.',
     '16) horario_inicio e horario_fim: aceitar 15hrs, 15hr, 15h, 15 hs, 15 horas, 15h00, 15h30, 15:00, 15.00, 8hrs, 8h30, às 15, das 15 às 18, 15h às 18h; saída HH:MM. Reconhecer os rótulos Horário que inicia, Horário de início, Horário inicial, Hora que inicia, Hora de início e Início, com ou sem acentos.',
-    '17) Se só existir horário inicial, horario_fim = +3h e registrar alerta "Horário final não informado; assumida duração padrão de 3 horas.".',
+    '17) Preservar fim explícito; senão usar duração explícita. Sem ambos, somente para serviço Visita Noite de Natal (inclusive com Papai Noel/Duende), fim = início +20min. Outros serviços continuam +3h. Informar o padrão efetivamente aplicado nos alertas.',
     '18) horario_chegada: sempre 20 minutos antes de horario_inicio.',
     '19) contato_hora_do_lazer, se existir no schema do contexto, deve ser sempre "(81) 99761-7476".',
     '20) CRÍTICO — servico_contratado: somente a descrição do SERVIÇO PRINCIPAL (uma linha); máximo ~150 caracteres no backend;',
@@ -1451,9 +1460,14 @@ async function organizeContractTextWithAI({ texto_bruto, contexto }) {
   const responseText = extractResponseText(apiData);
   const modelPayload = parseModelJson(responseText);
   const normalizedPayload = normalizeAndValidateModelPayload(modelPayload, dateReference, textoBruto);
+  const extraction = require('./contractExtractionRules').applyContractExtractionRules(normalizedPayload.dados, textoBruto);
+  if (extraction.horario_fim !== normalizedPayload.dados.horario_fim) {
+    normalizedPayload.alertas = normalizedPayload.alertas.filter((alert) => !/3 horas|tr[eê]s horas/i.test(alert));
+    normalizedPayload.alertas.push(`Horário final conferido com o texto e serviço informado: ${extraction.horario_fim}.`);
+  }
   const finalReturn = {
     ok: true,
-    dados: normalizedPayload.dados,
+    dados: extraction,
     faltantes: normalizedPayload.faltantes,
     incertos: normalizedPayload.incertos,
     alertas: normalizedPayload.alertas,

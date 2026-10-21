@@ -4,6 +4,7 @@
 }
 
 const { extractContractContact, withoutContractContact } = require('./contractContact');
+const { applyContractExtractionRules, extractLabeledContractName, isChristmasNightVisit } = require('./contractExtractionRules');
 
 function normalizeText(value) {
   if (!value) return "";
@@ -1539,6 +1540,8 @@ function isForbiddenLooseNameValue(value) {
 }
 
 function extractLooseName(text) {
+  const explicitName = extractLabeledContractName(text);
+  if (explicitName) return explicitName;
   const lines = splitLines(text);
 
   const labeled =
@@ -1643,6 +1646,9 @@ function extractLooseService(text) {
     pickLooseByLabel(text, SERVICE_LABELS) || "";
 
   if (labeled) return cleanServico(labeled);
+
+  const visitLine = splitLines(text).find((line) => /^visita\b/.test(normalizeText(line)) && isChristmasNightVisit(line));
+  if (visitLine) return cleanServico(visitLine);
 
   const isHorarioNarrative = (normalized) =>
     normalized.includes("convite") ||
@@ -2229,7 +2235,7 @@ function parseContractTextWithoutContact(text) {
 function parseContractText(text) {
   const result = parseContractTextWithoutContact(withoutContractContact(text));
   return buildParsedResponse({
-    ...result.extracted,
+    ...applyContractExtractionRules(result.extracted, text),
     contato_contratante: extractContractContact(text),
     texto_original: clean(text),
   });
