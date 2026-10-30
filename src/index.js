@@ -3493,7 +3493,7 @@ app.get('/escalas-evento/:id/pagamentos', requirePermission(ACCESS_PERMISSIONS.C
 
     const escalaResult = await pool.query(
       `
-      SELECT id, evento_id, colaborador_id, valor_recreador
+      SELECT id, evento_id, colaborador_id, valor_recreador, valor_pago_sem_data
       FROM escala_eventos
       WHERE id = $1
       `,
@@ -3537,6 +3537,7 @@ app.get('/escalas-evento/:id/pagamentos', requirePermission(ACCESS_PERMISSIONS.C
         evento_id: escalaResult.rows[0].evento_id,
         colaborador_id: escalaResult.rows[0].colaborador_id,
         valor_recreador: escalaResult.rows[0].valor_recreador,
+        valor_pago_sem_data: escalaResult.rows[0].valor_pago_sem_data,
         historico,
         resumo,
       },

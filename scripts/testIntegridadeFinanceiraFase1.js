@@ -657,6 +657,8 @@ async function main() {
     const movimentosParciais = await db.query("SELECT escala_evento_id,valor FROM pagamentos_escala_colaborador WHERE evento_id='fin-modal-ev' AND origem='lote' ORDER BY escala_evento_id");
     assert.deepEqual(movimentosParciais.rows.map((row) => [row.escala_evento_id, Number(row.valor)]), [['fin-modal-a', 150], ['fin-modal-b', 150]]);
     assert.deepEqual(await request('/colaboradores/fin-modal-l/pagamentos-pendentes'), []);
+    const pagamentosModal = await request('/escalas-evento/fin-modal-esc/pagamentos');
+    assert.deepEqual([Number(pagamentosModal.valor_recreador), Number(pagamentosModal.valor_pago_sem_data), Number(pagamentosModal.resumo.total_ativo)], [200, 0, 50]);
     console.log('PASS lote parcial: escala 200 com 50 pago mostra e registra 150; cancelado nao conta');
 
     // Concorrencia: duas quitacoes simultaneas nao pagam o custo duas vezes.
