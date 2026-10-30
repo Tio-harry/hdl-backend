@@ -13,7 +13,7 @@ const {
 } = require('./services/aiContractOrganizerService');
 const { parseTextosRapidosContratoImport } = require("./services/textosRapidosContratoImportParser");
 const {
-  protegerEscritas,
+  protegerRotas,
   ACCESS_PERMISSIONS,
   ACCESS_PROFILES,
   requireMutationPermission,
@@ -54,7 +54,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
-app.use(protegerEscritas);
+app.use(protegerRotas);
 app.use(createAuthRouter());
 app.use(createAdminUsersRouter());
 app.use(createHomeSummaryRouter());
@@ -3287,6 +3287,7 @@ app.get(
     try {
       await ensureColaboradoresTable();
       await ensureEscalaEventosTable();
+      await ensurePagamentosEscalaColaboradorTable();
 
       const colaboradorId = String(req.params.colaboradorId || '').trim();
       const eventoAtualId = String(req.query.eventoAtualId || '').trim();
@@ -3312,6 +3313,10 @@ app.get(
             esc.funcao,
             esc.valor_recreador,
             esc.status_pagamento,
+            COALESCE(esc.valor_pago_sem_data, 0) + COALESCE((
+              SELECT SUM(p.valor) FROM pagamentos_escala_colaborador p
+              WHERE p.escala_evento_id = esc.id AND LOWER(TRIM(COALESCE(p.status, ''))) = 'ativo'
+            ), 0) AS valor_ja_pago,
             CASE
               WHEN ev.data_evento ~ '^\\d{2}/\\d{2}/\\d{4}$'
               THEN to_date(ev.data_evento, 'DD/MM/YYYY')
@@ -3330,6 +3335,8 @@ app.get(
           contratante_nome,
           funcao,
           valor_recreador,
+          GREATEST(COALESCE(valor_recreador, 0) - valor_ja_pago, 0) AS valor_restante,
+          valor_ja_pago,
           status_pagamento,
           CASE WHEN $2::text <> '' AND evento_id = $2::text THEN true ELSE false END AS is_evento_atual
         FROM pendencias

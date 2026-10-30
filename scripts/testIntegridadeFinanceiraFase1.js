@@ -305,6 +305,10 @@ async function main() {
       INSERT INTO pagamentos_escala_colaborador (id,escala_evento_id,evento_id,colaborador_id,valor,data_pagamento,status)
       VALUES ('fin-lote-adiant','fin-lote-1','fin-lote','fin-c1',20,'2026-10-01','ativo')
     `);
+    const pendentesLote = await request('/colaboradores/fin-c1/pagamentos-pendentes');
+    const restantes = Object.fromEntries(pendentesLote.map((row) => [row.escala_evento_id, Number(row.valor_restante)]));
+    assert.equal(restantes['fin-lote-1'], 100);
+    assert.equal(restantes['fin-lote-2'], 80);
     const lote = await fetch(`${base}/escalas-evento/pagamento-lote`, {
       method: 'PATCH',
       headers: { Cookie: cookie, 'Content-Type': 'application/json' },
@@ -583,6 +587,77 @@ async function main() {
     assert.equal(esqueci.status, 200);
     assert.equal(await statusCom(cookie, '/eventos/fin-novo', 'PUT', { observacoes: 'gestor apos protecao' }), 200);
     console.log(`PASS sem sessao: ${rotasEscrita.size} rotas de escrita auditadas, 401 fora de /auth, dados intactos`);
+
+    // Leitura: toda GET do codigo exige sessao, exceto a allowlist explicita abaixo.
+    const rotasLeitura = new Set();
+    for (const fonte of fontes) {
+      for (const [, rota] of fs.readFileSync(fonte, 'utf8').matchAll(/(?:app|router)\.get\(\s*'([^']+)'/g)) rotasLeitura.add(rota);
+    }
+    assert.ok(rotasLeitura.size >= 40, `rotas GET encontradas: ${rotasLeitura.size}`);
+    const publicasGet = { '/': 200, '/auth/reset-password/:token': 400 };
+    const urlDe = (rota) => `${base}${rota.replace(/:[A-Za-z]+/g, 'fin-novo')}`;
+    for (const rota of rotasLeitura) {
+      const esperado = publicasGet[rota] ?? 401;
+      assert.equal((await fetch(urlDe(rota))).status, esperado, `sem sessao GET ${rota}`);
+      assert.equal((await fetch(urlDe(rota), { headers: { Cookie: 'hdl_session=token-invalido' } })).status, esperado, `token invalido GET ${rota}`);
+    }
+    assert.deepEqual(Object.keys(await (await fetch(`${base}/`)).json()).sort(), ['mensagem', 'ok']);
+    assert.equal((await fetch(`${base}/eventos`, { method: 'HEAD' })).status, 401);
+    assert.equal((await fetch(`${base}/EVENTOS`)).status, 401);
+    assert.equal((await fetch(`${base}/rota-inexistente`)).status, 401);
+    assert.equal((await fetch(`${base}/auth/nova-rota-futura`)).status, 401);
+    for (const [id, nome] of [['noel', 'Papai Noel'], ['duende', 'Papai Noel com Duende'], ['visita', 'Visita Noite de Natal']]) {
+      await db.query('INSERT INTO servicos(id,nome_servico) VALUES($1,$2)', [id, nome]);
+    }
+    for (const migration of ['001_noite_natal.sql', '002_funcoes_equipe.sql']) {
+      await db.query(fs.readFileSync(path.join(__dirname, '../db/migrations', migration), 'utf8'));
+    }
+    const matriz = { gestor: {}, leitura: {}, operador: {} };
+    for (const rota of rotasLeitura) {
+      if (rota in publicasGet) continue;
+      for (const [nome, sessao] of [['gestor', cookie], ['leitura', leitura], ['operador', operador]]) {
+        const status = await statusCom(sessao, rota.replace(/:[A-Za-z]+/g, 'fin-novo'));
+        matriz[nome][rota] = status;
+        assert.ok(status !== 401 && status < 500, `${nome} GET ${rota}: ${status}`);
+      }
+      assert.notEqual(matriz.gestor[rota], 403, `gestor GET ${rota}`);
+    }
+    for (const rota of ['/eventos', '/contracts', '/colaboradores', '/escalas-evento', '/ciclos-financeiros', '/cofrinhos-config', '/custos-operacionais']) {
+      assert.equal(matriz.gestor[rota], 200, `gestor ${rota}`);
+      assert.equal(matriz.leitura[rota], 200, `leitura ${rota}`);
+    }
+    for (const rota of ['/admin/usuarios', '/textos-rapidos-contrato', '/funcoes-equipe/admin']) assert.equal(matriz.leitura[rota], 403, `leitura ${rota}`);
+    for (const rota of ['/ciclos-financeiros', '/cofrinhos-config', '/custos-operacionais', '/admin/usuarios']) assert.equal(matriz.operador[rota], 403, `operador ${rota}`);
+    const bloqueadas = (nome) => Object.entries(matriz[nome]).filter(([, status]) => status === 403).map(([rota]) => rota);
+    console.log(`AUDITORIA GET: ${rotasLeitura.size} rotas; ${rotasLeitura.size - Object.keys(publicasGet).length} exigem sessao; publicas: ${Object.keys(publicasGet).join(', ')}`);
+    console.log(`AUDITORIA GET 403 leitura: ${bloqueadas('leitura').join(', ')}`);
+    console.log(`AUDITORIA GET 403 operador: ${bloqueadas('operador').join(', ')}`);
+    console.log('PASS leitura: 401 sem sessao e com token invalido, allowlist exata, 200/403 por perfil');
+
+    // Lote com pagamento parcial: a pendencia e o movimento mostram somente o restante.
+    await db.query(`
+      INSERT INTO colaboradores(id,nome_colaborador) VALUES ('fin-modal-l','Lote parcial'),('fin-modal','Pessoa Modal');
+      INSERT INTO eventos (id,identificador_interno,contratante_nome,data_evento,valor_total,status_financeiro)
+      VALUES ('fin-modal-ev','ID 410','Lote parcial','01/10/2026',500,'Em andamento'),
+             ('fin-modal','ID 411','Modal parcial','01/10/2026',500,'Em andamento');
+      INSERT INTO escala_eventos(id,evento_id,colaborador_id,colaborador_nome,valor_recreador,status_pagamento,status_aceite,valor_pago_sem_data)
+      VALUES ('fin-modal-a','fin-modal-ev','fin-modal-l','Lote parcial',200,'Pendente','Confirmado',0),
+             ('fin-modal-b','fin-modal-ev','fin-modal-l','Lote parcial',300,'Pendente','Confirmado',100),
+             ('fin-modal-esc','fin-modal','fin-modal','Pessoa Modal',200,'Pendente','Confirmado',0);
+      INSERT INTO pagamentos_escala_colaborador (id,escala_evento_id,evento_id,colaborador_id,valor,data_pagamento,status)
+      VALUES ('fin-modal-a1','fin-modal-a','fin-modal-ev','fin-modal-l',50,'2026-10-01','ativo'),
+             ('fin-modal-a2','fin-modal-a','fin-modal-ev','fin-modal-l',10,'2026-10-02','cancelado'),
+             ('fin-modal-b1','fin-modal-b','fin-modal-ev','fin-modal-l',50,'2026-10-01','ativo'),
+             ('fin-modal-p','fin-modal-esc','fin-modal','fin-modal',50,'2026-10-01','ativo');
+    `);
+    const parciais = await request('/colaboradores/fin-modal-l/pagamentos-pendentes');
+    const porEscala = Object.fromEntries(parciais.map((row) => [row.escala_evento_id, [Number(row.valor_recreador), Number(row.valor_ja_pago), Number(row.valor_restante)]]));
+    assert.deepEqual(porEscala, { 'fin-modal-a': [200, 50, 150], 'fin-modal-b': [300, 150, 150] });
+    await request('/escalas-evento/pagamento-lote', { method: 'PATCH', body: { colaborador_id: 'fin-modal-l', escala_evento_ids: ['fin-modal-a', 'fin-modal-b'] } });
+    const movimentosParciais = await db.query("SELECT escala_evento_id,valor FROM pagamentos_escala_colaborador WHERE evento_id='fin-modal-ev' AND origem='lote' ORDER BY escala_evento_id");
+    assert.deepEqual(movimentosParciais.rows.map((row) => [row.escala_evento_id, Number(row.valor)]), [['fin-modal-a', 150], ['fin-modal-b', 150]]);
+    assert.deepEqual(await request('/colaboradores/fin-modal-l/pagamentos-pendentes'), []);
+    console.log('PASS lote parcial: escala 200 com 50 pago mostra e registra 150; cancelado nao conta');
 
     // Concorrencia: duas quitacoes simultaneas nao pagam o custo duas vezes.
     const paralelas = await Promise.all([

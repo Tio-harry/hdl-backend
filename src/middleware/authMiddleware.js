@@ -199,9 +199,23 @@ function buildForbiddenResponse(res, message = 'Sem permissao para executar esta
   });
 }
 
-/** Toda escrita exige sessao, e perfil de leitura nunca altera dados; so /auth fica aberto para entrar na conta. */
-async function protegerEscritas(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.path.startsWith('/auth/')) return next();
+/** Unicas rotas sem sessao: estado minimo do servico e o necessario para entrar na conta. */
+const ROTAS_PUBLICAS = [
+  { metodos: ['GET', 'HEAD'], rota: /^\/$/ },
+  { metodos: ['POST'], rota: /^\/auth\/login$/ },
+  { metodos: ['POST'], rota: /^\/auth\/logout$/ },
+  { metodos: ['POST'], rota: /^\/auth\/forgot-password$/ },
+  { metodos: ['GET', 'HEAD'], rota: /^\/auth\/reset-password\/[^/]+$/ },
+  { metodos: ['POST'], rota: /^\/auth\/reset-password$/ },
+];
+
+function rotaPublica(req) {
+  return ROTAS_PUBLICAS.some(({ metodos, rota }) => metodos.includes(req.method) && rota.test(req.path));
+}
+
+/** Toda rota exige sessao por padrao, e perfil de leitura nunca altera dados. */
+async function protegerRotas(req, res, next) {
+  if (req.method === 'OPTIONS' || rotaPublica(req)) return next();
   const naoAutenticado = () => res.status(401).json({ ok: false, message: 'Nao autenticado.' });
   const token = getSessionTokenFromRequest(req);
   if (!token) return naoAutenticado();
@@ -209,7 +223,8 @@ async function protegerEscritas(req, res, next) {
     const authContext = await getAuthenticatedUserFromToken(token);
     if (!authContext?.usuario) return naoAutenticado();
     req.auth = authContext;
-    if (String(authContext?.usuario?.perfil || '').trim().toLowerCase() === ACCESS_PROFILES.FINANCEIRO_LEITURA) {
+    const somenteLeitura = ['GET', 'HEAD'].includes(req.method);
+    if (!somenteLeitura && String(authContext?.usuario?.perfil || '').trim().toLowerCase() === ACCESS_PROFILES.FINANCEIRO_LEITURA) {
       return buildForbiddenResponse(res, 'Perfil de leitura financeira nao pode alterar dados.');
     }
     return next();
@@ -309,7 +324,7 @@ function requireMutationPermission({
 }
 
 module.exports = {
-  protegerEscritas,
+  protegerRotas,
   ACCESS_PERMISSIONS,
   ACCESS_PROFILES,
   attachOptionalAuth,
