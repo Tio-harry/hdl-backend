@@ -5,7 +5,9 @@
     "main":  "index.js",
     "scripts":  {
                     "test":  "echo \"Error: no test specified\" \u0026\u0026 exit 1",
-                    "test:contract-parser":  "node scripts/testContractParserCases.js"
+                    "test:contract-parser":  "node scripts/testContractParserCases.js",
+                    "migrate:financeiro-fase1":  "node scripts/migrateIntegridadeFinanceiraFase1.js",
+                    "test:financeiro-fase1":  "node scripts/testIntegridadeFinanceiraFase1.js"
                 },
     "keywords":  [
 

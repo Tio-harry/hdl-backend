@@ -10,7 +10,7 @@ const PASSWORD_SCRYPT_PARAMS = {
   parallelization: 1,
   keyLength: 64,
 };
-const USER_PROFILES = ['gestor', 'operador'];
+const USER_PROFILES = ['gestor', 'operador', 'financeiro_leitura'];
 
 class AuthError extends Error {
   constructor(status, message) {
@@ -157,7 +157,7 @@ async function ensureAuthSchema() {
       nome TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       senha_hash TEXT NOT NULL,
-      perfil TEXT NOT NULL CHECK (perfil IN ('gestor', 'operador')),
+      perfil TEXT NOT NULL CHECK (perfil IN ('gestor', 'operador', 'financeiro_leitura')),
       ativo BOOLEAN NOT NULL DEFAULT TRUE,
       ultimo_login_em TIMESTAMP NULL,
       criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

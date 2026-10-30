@@ -113,9 +113,13 @@ CREATE TABLE pagamentos_escala_colaborador (
   colaborador_id TEXT NOT NULL REFERENCES colaboradores(id),
   tipo_pagamento TEXT NOT NULL DEFAULT 'adiantamento',
   valor NUMERIC(10,2) NOT NULL DEFAULT 0,
-  data_pagamento TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  data_pagamento TIMESTAMP NOT NULL DEFAULT ((now() AT TIME ZONE 'America/Recife')::date::timestamp),
   observacao TEXT,
   status TEXT NOT NULL DEFAULT 'ativo',
+  origem TEXT NOT NULL DEFAULT 'manual',
+  created_by TEXT,
+  cancelado_em TIMESTAMPTZ,
+  cancelado_por TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -123,6 +127,83 @@ CREATE INDEX idx_pagamentos_escala_colaborador_escala_evento_id ON pagamentos_es
 CREATE INDEX idx_pagamentos_escala_colaborador_evento_id ON pagamentos_escala_colaborador (evento_id);
 CREATE INDEX idx_pagamentos_escala_colaborador_colaborador_id ON pagamentos_escala_colaborador (colaborador_id);
 CREATE INDEX idx_pagamentos_escala_colaborador_status ON pagamentos_escala_colaborador (status);
+
+CREATE TABLE custos_operacionais_evento (
+  id TEXT PRIMARY KEY,
+  evento_id TEXT NOT NULL REFERENCES eventos(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL CHECK (tipo IN ('deslocamento', 'extras')),
+  situacao TEXT NOT NULL DEFAULT 'LEGADO'
+    CHECK (situacao IN ('NAO_INFORMADO', 'LEGADO', 'PENDENTE', 'PARCIAL', 'PAGO')),
+  valor_quitado NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (valor_quitado >= 0),
+  data_quitacao DATE,
+  origem TEXT NOT NULL DEFAULT 'migration_legado',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (evento_id, tipo),
+  CHECK (
+    (situacao IN ('NAO_INFORMADO', 'LEGADO', 'PENDENTE') AND valor_quitado = 0 AND data_quitacao IS NULL)
+    OR (situacao = 'PARCIAL' AND valor_quitado > 0)
+    OR (situacao = 'PAGO' AND valor_quitado > 0)
+  )
+);
+CREATE INDEX custos_operacionais_evento_evento_idx ON custos_operacionais_evento (evento_id);
+CREATE INDEX custos_operacionais_evento_situacao_idx ON custos_operacionais_evento (situacao, tipo);
+CREATE INDEX custos_operacionais_evento_data_quitacao_idx ON custos_operacionais_evento (data_quitacao)
+  WHERE data_quitacao IS NOT NULL;
+
+CREATE TABLE custos_operacionais_historico (
+  id TEXT PRIMARY KEY,
+  obrigacao_id TEXT NOT NULL REFERENCES custos_operacionais_evento(id) ON DELETE CASCADE,
+  evento_id TEXT NOT NULL REFERENCES eventos(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL CHECK (tipo IN ('deslocamento', 'extras')),
+  acao TEXT NOT NULL,
+  situacao_anterior TEXT,
+  situacao_nova TEXT NOT NULL,
+  valor_previsto_snapshot NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (valor_previsto_snapshot >= 0),
+  valor_quitado_anterior NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (valor_quitado_anterior >= 0),
+  valor_quitado_novo NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (valor_quitado_novo >= 0),
+  data_quitacao_anterior DATE,
+  data_quitacao_nova DATE,
+  observacao TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX custos_operacionais_historico_evento_idx ON custos_operacionais_historico (evento_id, created_at DESC);
+CREATE INDEX custos_operacionais_historico_obrigacao_idx ON custos_operacionais_historico (obrigacao_id, created_at DESC);
+
+CREATE TABLE custos_operacionais_movimentos (
+  id TEXT PRIMARY KEY,
+  obrigacao_id TEXT NOT NULL REFERENCES custos_operacionais_evento(id) ON DELETE CASCADE,
+  evento_id TEXT NOT NULL REFERENCES eventos(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL CHECK (tipo IN ('deslocamento', 'extras')),
+  valor NUMERIC(12,2) NOT NULL CHECK (valor > 0),
+  data_quitacao DATE,
+  status TEXT NOT NULL DEFAULT 'ativo' CHECK (status IN ('ativo', 'estornado')),
+  observacao TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  estornado_em TIMESTAMPTZ,
+  estornado_por TEXT,
+  CHECK ((status = 'estornado') = (estornado_em IS NOT NULL))
+);
+CREATE INDEX custos_operacionais_movimentos_obrigacao_idx ON custos_operacionais_movimentos (obrigacao_id, status);
+CREATE INDEX custos_operacionais_movimentos_data_idx ON custos_operacionais_movimentos (data_quitacao) WHERE status = 'ativo';
+
+CREATE TABLE escala_pagamento_historico (
+  id TEXT PRIMARY KEY,
+  escala_evento_id TEXT NOT NULL,
+  evento_id TEXT,
+  acao TEXT NOT NULL,
+  status_anterior TEXT,
+  status_novo TEXT,
+  pagamento_id TEXT,
+  valor NUMERIC(12,2) NOT NULL DEFAULT 0,
+  data_pagamento DATE,
+  origem TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX escala_pagamento_historico_escala_idx ON escala_pagamento_historico (escala_evento_id, created_at DESC);
 
 CREATE TABLE servico_eventos (
   id TEXT PRIMARY KEY,
@@ -152,8 +233,29 @@ CREATE TABLE ciclos_financeiros (
   cofrinho_estoque NUMERIC(10,2) DEFAULT 0,
   qtd_eventos INTEGER DEFAULT 0,
   observacoes TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  custo_quitado NUMERIC(14,2) NOT NULL DEFAULT 0,
+  snapshot JSONB,
+  snapshot_versao INTEGER,
+  travado_em TIMESTAMPTZ,
+  travado_por TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CHECK (snapshot IS NULL OR snapshot_versao IS NOT NULL)
 );
+
+CREATE TABLE ciclos_financeiros_historico (
+  id TEXT PRIMARY KEY,
+  ciclo_id TEXT NOT NULL,
+  ano INTEGER NOT NULL,
+  mes INTEGER NOT NULL,
+  tipo TEXT NOT NULL,
+  acao TEXT NOT NULL CHECK (acao IN ('TRAVAMENTO', 'DESTRAVAMENTO')),
+  registro JSONB NOT NULL,
+  motivo TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ciclos_financeiros_historico_ciclo_idx ON ciclos_financeiros_historico (ciclo_id, created_at DESC);
 
 CREATE TABLE colaboradores (
   id TEXT PRIMARY KEY,
@@ -216,3 +318,5 @@ CREATE TABLE textos_rapidos_contrato (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Triggers de evento novo e de ciclo travado: ver db/migrations/003_integridade_financeira_fase1.sql.

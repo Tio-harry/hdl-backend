@@ -25,6 +25,17 @@ const { createHomeSummaryRouter } = require('./routes/homeSummaryRoutes');
 const { createAutomaticBackupRouter } = require('./routes/automaticBackupRoutes');
 const { createNatalRouter } = require('./routes/natalRoutes');
 const { createFuncoesEquipeRouter } = require('./routes/funcoesEquipeRoutes');
+const { createCustosOperacionaisRouter } = require('./routes/custosOperacionaisRoutes');
+const { normalizeCivilDate, syncCustosOperacionaisFromEvento } = require('./services/custosOperacionaisService');
+const { createCiclosFinanceirosRouter } = require('./routes/ciclosFinanceirosRoutes');
+const {
+  ORIGENS_AUTOMATICAS,
+  escalaEstaPaga,
+  hojeCivilRecife,
+  registrarHistorico: registrarHistoricoEscala,
+  registrarQuitacaoEscala,
+  reverterQuitacaoEscala,
+} = require('./services/escalaPagamentosService');
 const { validarFuncaoEscala } = require('./services/funcoesEquipeService');
 const { resolvePrincipal } = require('./services/natalService');
 const { startAutomaticBackupScheduler } = require('./services/automaticBackupScheduler');
@@ -47,6 +58,8 @@ app.use(createHomeSummaryRouter());
 app.use(createAutomaticBackupRouter());
 app.use(createNatalRouter());
 app.use(createFuncoesEquipeRouter());
+app.use(createCustosOperacionaisRouter(pool));
+app.use(createCiclosFinanceirosRouter(pool));
 
 const CONTRACT_INSERT_FIELDS = [
   'servico_principal_id',
@@ -2185,7 +2198,7 @@ async function ensurePagamentosEscalaColaboradorTable() {
  * Total da equipe no evento: soma dos valor_recreador da escala.
  * Sem linhas ou soma NULL (ex.: todos null) -> 0, alinhado ao DEFAULT do schema em eventos.pagamento_colaborador.
  */
-async function syncEventoPagamentoColaboradorFromEscalaSum(client, eventoId) {
+async function syncEventoPagamentoColaboradorFromEscalaSum(client, eventoId, { preservarSemEscalas = false } = {}) {
   await client.query(
     `
     UPDATE eventos
@@ -2194,6 +2207,7 @@ async function syncEventoPagamentoColaboradorFromEscalaSum(client, eventoId) {
       0
     )
     WHERE id = $1
+      ${preservarSemEscalas ? 'AND EXISTS (SELECT 1 FROM escala_eventos WHERE evento_id = $1)' : ''}
     `,
     [eventoId]
   );
@@ -2856,17 +2870,38 @@ app.get('/eventos', async (req, res) => {
         COALESCE(esc.qtd_escalas, 0) AS qtd_escalas,
         COALESCE(esc.qtd_escalas_pagas, 0) AS qtd_escalas_pagas,
         COALESCE(esc.qtd_escalas_pendentes, 0) AS qtd_escalas_pendentes,
-        COALESCE(esc.soma_valor_recreador, 0) AS soma_valor_recreador
+        COALESCE(esc.soma_valor_recreador, 0) AS soma_valor_recreador,
+        COALESCE(esc.soma_valor_recreador_pago, 0) AS soma_valor_recreador_pago,
+        COALESCE(esc.soma_valor_recreador_pendente, 0) AS soma_valor_recreador_pendente
       FROM eventos e
       LEFT JOIN (
         SELECT
-          evento_id,
+          ee.evento_id,
           COUNT(*) AS qtd_escalas,
-          SUM(CASE WHEN LOWER(TRIM(COALESCE(status_pagamento, ''))) = 'pago' THEN 1 ELSE 0 END) AS qtd_escalas_pagas,
-          SUM(CASE WHEN LOWER(TRIM(COALESCE(status_pagamento, ''))) <> 'pago' THEN 1 ELSE 0 END) AS qtd_escalas_pendentes,
-          COALESCE(SUM(COALESCE(valor_recreador, 0)), 0) AS soma_valor_recreador
-        FROM escala_eventos
-        GROUP BY evento_id
+          SUM(CASE WHEN LOWER(TRIM(COALESCE(ee.status_pagamento, ''))) = 'pago' THEN 1 ELSE 0 END) AS qtd_escalas_pagas,
+          SUM(CASE WHEN LOWER(TRIM(COALESCE(ee.status_pagamento, ''))) <> 'pago' THEN 1 ELSE 0 END) AS qtd_escalas_pendentes,
+          COALESCE(SUM(COALESCE(ee.valor_recreador, 0)), 0) AS soma_valor_recreador,
+          COALESCE(SUM(
+            CASE
+              WHEN LOWER(TRIM(COALESCE(ee.status_pagamento, ''))) = 'pago'
+                THEN COALESCE(ee.valor_recreador, 0)
+              ELSE LEAST(COALESCE(ee.valor_recreador, 0), COALESCE(pg.total_ativo, 0))
+            END
+          ), 0) AS soma_valor_recreador_pago,
+          COALESCE(SUM(
+            CASE
+              WHEN LOWER(TRIM(COALESCE(ee.status_pagamento, ''))) = 'pago' THEN 0
+              ELSE GREATEST(COALESCE(ee.valor_recreador, 0) - COALESCE(pg.total_ativo, 0), 0)
+            END
+          ), 0) AS soma_valor_recreador_pendente
+        FROM escala_eventos ee
+        LEFT JOIN (
+          SELECT escala_evento_id, SUM(valor) AS total_ativo
+          FROM pagamentos_escala_colaborador
+          WHERE LOWER(TRIM(COALESCE(status, ''))) = 'ativo'
+          GROUP BY escala_evento_id
+        ) pg ON pg.escala_evento_id = ee.id
+        GROUP BY ee.evento_id
       ) esc ON esc.evento_id = e.id
       ORDER BY
         CASE
@@ -2882,28 +2917,33 @@ app.get('/eventos', async (req, res) => {
 });
 
 app.put('/eventos/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     if (Object.prototype.hasOwnProperty.call(req.body, 'servico_principal_id')) {
-      req.body.servico_principal_id = await resolvePrincipal(pool, '', req.body.servico_principal_id);
+      req.body.servico_principal_id = await resolvePrincipal(client, '', req.body.servico_principal_id);
     }
     const updateFields = getProvidedFields(req.body, EVENTO_UPDATE_FIELDS);
 
     if (!updateFields.length) {
-      return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar' });
+      const error = new Error('Nenhum campo para atualizar');
+      error.statusCode = 400;
+      throw error;
     }
 
-    const existingEvento = await pool.query('SELECT * FROM eventos WHERE id = $1', [req.params.id]);
+    const existingEvento = await client.query('SELECT * FROM eventos WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!existingEvento.rowCount) {
-      return res.status(404).json({ ok: false, erro: 'Evento nao encontrado' });
+      const error = new Error('Evento nao encontrado');
+      error.statusCode = 404;
+      throw error;
     }
 
     if (updateFields.includes('status_aceite_praca')) {
-      await ensureEscalaEventosTable();
       const valorAtual = String(existingEvento.rows[0]?.status_aceite_praca ?? '').trim();
       const valorNovo = String(normalizeEventoValue('status_aceite_praca', req.body.status_aceite_praca) ?? '').trim();
 
       if (valorNovo !== valorAtual) {
-        const escalasRelacionadas = await pool.query(
+        const escalasRelacionadas = await client.query(
           `
           SELECT COUNT(*)::int AS total
           FROM escala_eventos
@@ -2913,10 +2953,9 @@ app.put('/eventos/:id', async (req, res) => {
         );
         const totalEscalas = Number(escalasRelacionadas.rows[0]?.total || 0);
         if (totalEscalas > 0) {
-          return res.status(409).json({
-            ok: false,
-            erro: 'A praça não pode ser alterada enquanto houver equipe escalada. Remova primeiro os colaboradores da Equipe Escalada.',
-          });
+          const error = new Error('A praça não pode ser alterada enquanto houver equipe escalada. Remova primeiro os colaboradores da Equipe Escalada.');
+          error.statusCode = 409;
+          throw error;
         }
       }
     }
@@ -2936,7 +2975,7 @@ app.put('/eventos/:id', async (req, res) => {
       .join(', ');
     const values = fieldsToPersist.map((field) => normalizedPayload[field]);
 
-    const result = await pool.query(`
+    const result = await client.query(`
       UPDATE eventos
       SET ${setClause}
       WHERE id = $${values.length + 1}
@@ -2944,16 +2983,27 @@ app.put('/eventos/:id', async (req, res) => {
     `, [...values, req.params.id]);
 
     if (!result.rowCount) {
-      return res.status(404).json({ ok: false, erro: 'Evento nao encontrado' });
+      const error = new Error('Evento nao encontrado');
+      error.statusCode = 404;
+      throw error;
     }
 
-    await ensureEscalaEventosTable();
-    await syncEventoPagamentoColaboradorFromEscalaSum(pool, req.params.id);
+    await syncCustosOperacionaisFromEvento(
+      client,
+      existingEvento.rows[0],
+      result.rows[0],
+      req?.auth?.usuario?.id != null ? String(req.auth.usuario.id) : null
+    );
+    await syncEventoPagamentoColaboradorFromEscalaSum(client, req.params.id, { preservarSemEscalas: true });
 
-    const refreshed = await pool.query('SELECT * FROM eventos WHERE id = $1', [req.params.id]);
+    const refreshed = await client.query('SELECT * FROM eventos WHERE id = $1', [req.params.id]);
+    await client.query('COMMIT');
     res.json({ ok: true, dados: refreshed.rows[0] || result.rows[0] });
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -3023,7 +3073,7 @@ app.get('/ciclos-financeiros', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_V
   }
 });
 
-app.post('/ciclos-financeiros', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_VIEW), async (req, res) => {
+app.post('/ciclos-financeiros', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_EDIT), async (req, res) => {
   try {
     await ensureCiclosFinanceirosTable();
 
@@ -3035,7 +3085,10 @@ app.post('/ciclos-financeiros', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_
       return res.status(400).json({ ok: false, erro: 'tipo deve ser A ou B' });
     }
 
-    const status = String(req.body.status || 'travado').trim() || 'travado';
+    const status = String(req.body.status || 'aberto').trim() || 'aberto';
+    if (status === 'travado') {
+      return res.status(400).json({ ok: false, erro: 'Use a rota de travamento para congelar o ciclo com snapshot' });
+    }
     const dataInicio = req.body.data_inicio != null ? String(req.body.data_inicio) : null;
     const dataFim = req.body.data_fim != null ? String(req.body.data_fim) : null;
     const observacoes = req.body.observacoes != null ? String(req.body.observacoes) : null;
@@ -3096,13 +3149,21 @@ app.post('/ciclos-financeiros', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_
   }
 });
 
-app.put('/ciclos-financeiros/:id', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_VIEW), async (req, res) => {
+app.put('/ciclos-financeiros/:id', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_EDIT), async (req, res) => {
   try {
     await ensureCiclosFinanceirosTable();
 
     const updateFields = getProvidedFields(req.body, CICLO_FINANCEIRO_UPDATE_FIELDS);
     if (!updateFields.length) {
       return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar' });
+    }
+
+    if (updateFields.includes('status')) {
+      return res.status(400).json({ ok: false, erro: 'Use as rotas de travamento e destravamento para mudar o status do ciclo' });
+    }
+    const cicloAtual = await pool.query('SELECT status FROM ciclos_financeiros WHERE id = $1', [req.params.id]);
+    if (cicloAtual.rows[0]?.status === 'travado') {
+      return res.status(409).json({ ok: false, erro: 'Ciclo travado e historico imutavel' });
     }
 
     if (updateFields.includes('tipo')) {
@@ -3157,7 +3218,7 @@ app.get('/cofrinhos-config', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_VIE
   }
 });
 
-app.put('/cofrinhos-config', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_VIEW), async (req, res) => {
+app.put('/cofrinhos-config', requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_EDIT), async (req, res) => {
   const client = await pool.connect();
   try {
     await ensureCofrinhosConfigTable();
@@ -3286,12 +3347,13 @@ app.get(
 
 app.patch(
   '/escalas-evento/pagamento-lote',
-  requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_VIEW),
+  requirePermission(ACCESS_PERMISSIONS.FINANCEIRO_EDIT),
   async (req, res) => {
     const client = await pool.connect();
     try {
       await ensureColaboradoresTable();
       await ensureEscalaEventosTable();
+      await ensurePagamentosEscalaColaboradorTable();
 
       const colaboradorId = String(req.body?.colaborador_id || '').trim();
       const rawIds = Array.isArray(req.body?.escala_evento_ids) ? req.body.escala_evento_ids : [];
@@ -3366,6 +3428,15 @@ app.patch(
 
       let updatedIds = [];
       if (elegiveis.length) {
+        const dataPagamentoLote = normalizeCivilDate(req.body?.data_pagamento) || hojeCivilRecife();
+        const actorLote = req?.auth?.usuario?.id != null ? String(req.auth.usuario.id) : null;
+        for (const row of elegiveis) {
+          await registrarQuitacaoEscala(client, row, {
+            dataPagamento: dataPagamentoLote,
+            origem: 'lote',
+            createdBy: actorLote,
+          });
+        }
         const idsToUpdate = elegiveis.map((row) => String(row.id));
         const updateResult = await client.query(
           `
@@ -3394,7 +3465,7 @@ app.patch(
       });
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch {}
-      res.status(500).json({ ok: false, erro: error.message });
+      res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
     } finally {
       client.release();
     }
@@ -3508,12 +3579,16 @@ app.post('/escalas-evento/:id/pagamentos', requirePermission(ACCESS_PERMISSIONS.
         valor,
         data_pagamento,
         observacao,
-        status
+        status,
+        created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamp, CURRENT_TIMESTAMP), $8, 'ativo')
+      VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamp, (now() AT TIME ZONE 'America/Recife')::date::timestamp), $8, 'ativo', $9)
       RETURNING *
       `,
-      [novoPagamentoId, escalaId, eventoId, colaboradorId, tipoPagamento, valor, dataPagamento, observacao]
+      [
+        novoPagamentoId, escalaId, eventoId, colaboradorId, tipoPagamento, valor, dataPagamento, observacao,
+        req?.auth?.usuario?.id != null ? String(req.auth.usuario.id) : null,
+      ]
     );
 
     return res.status(201).json({ ok: true, dados: result.rows[0] });
@@ -3589,20 +3664,56 @@ app.patch('/pagamentos-escala-colaborador/:id/cancelar', requirePermission(ACCES
       return res.status(400).json({ ok: false, erro: 'id do pagamento nao informado' });
     }
 
-    const result = await pool.query(
-      `
-      UPDATE pagamentos_escala_colaborador
-      SET status = 'cancelado', updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-      RETURNING *
-      `,
-      [pagamentoId]
-    );
-    if (!result.rowCount) {
-      return res.status(404).json({ ok: false, erro: 'Pagamento da escala nao encontrado' });
-    }
+    const actor = req?.auth?.usuario?.id != null ? String(req.auth.usuario.id) : null;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `
+        UPDATE pagamentos_escala_colaborador
+        SET status = 'cancelado', cancelado_em = now(), cancelado_por = $2, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING *
+        `,
+        [pagamentoId, actor]
+      );
+      if (!result.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ ok: false, erro: 'Pagamento da escala nao encontrado' });
+      }
 
-    return res.json({ ok: true, dados: result.rows[0] });
+      const pagamento = result.rows[0];
+      // Cancelar a quitacao gerada por "Pago" reabre a escala; adiantamento manual nao altera o status.
+      if (ORIGENS_AUTOMATICAS.includes(pagamento.origem)) {
+        const reaberta = await client.query(
+          `
+          UPDATE escala_eventos
+          SET status_pagamento = 'Pendente', updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1 AND LOWER(TRIM(COALESCE(status_pagamento, ''))) = 'pago'
+          RETURNING id
+          `,
+          [pagamento.escala_evento_id]
+        );
+        await registrarHistoricoEscala(client, {
+          escalaId: pagamento.escala_evento_id,
+          eventoId: pagamento.evento_id,
+          acao: 'CANCELAMENTO_PAGAMENTO',
+          statusAnterior: reaberta.rowCount ? 'Pago' : null,
+          statusNovo: reaberta.rowCount ? 'Pendente' : null,
+          pagamentoId,
+          valor: pagamento.valor,
+          origem: pagamento.origem,
+          createdBy: actor,
+        });
+      }
+      await client.query('COMMIT');
+      return res.json({ ok: true, dados: pagamento });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     return res.status(error.statusCode || 500).json({ ok: false, erro: error.message });
   }
@@ -6447,7 +6558,12 @@ app.post('/eventos/:id/escalas', async (req, res) => {
     const valorRecreador = normalizeEscalaEventoValue('valor_recreador', req.body.valor_recreador);
     const funcao = await validarFuncaoEscala(pool, req.body.funcao ?? 'Recreador');
 
-    const result = await pool.query(`
+    await ensurePagamentosEscalaColaboradorTable();
+    const client = await pool.connect();
+    let result;
+    try {
+      await client.query('BEGIN');
+      result = await client.query(`
       INSERT INTO escala_eventos (
         id,
         evento_id,
@@ -6475,7 +6591,22 @@ app.post('/eventos/:id/escalas', async (req, res) => {
       normalizeEscalaEventoValue('observacao_escala', req.body.observacao_escala)
     ]);
 
-    await syncEventoPagamentoColaboradorFromEscalaSum(pool, req.params.id);
+      if (escalaEstaPaga(result.rows[0].status_pagamento)) {
+        await registrarQuitacaoEscala(client, result.rows[0], {
+          dataPagamento: normalizeCivilDate(req.body.data_pagamento),
+          origem: 'status_pago',
+          createdBy: req?.auth?.usuario?.id != null ? String(req.auth.usuario.id) : null,
+          statusAnterior: null,
+        });
+      }
+      await syncEventoPagamentoColaboradorFromEscalaSum(client, req.params.id);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
 
     res.status(201).json({ ok: true, dados: result.rows[0] });
   } catch (error) {
@@ -6560,21 +6691,56 @@ app.put('/escalas-evento/:id', async (req, res) => {
     }
     const setClause = setFields.join(', ');
 
-    const result = await pool.query(`
+    await ensurePagamentosEscalaColaboradorTable();
+    const client = await pool.connect();
+    let result;
+    try {
+      await client.query('BEGIN');
+      const { rows: [escalaTravada] } = await client.query(
+        'SELECT status_pagamento FROM escala_eventos WHERE id = $1 FOR UPDATE',
+        [req.params.id]
+      );
+      result = await client.query(`
       UPDATE escala_eventos
       SET ${setClause}, updated_at = CURRENT_TIMESTAMP
       WHERE id = $${values.length + 1}
       RETURNING *
     `, [...values, req.params.id]);
 
-    if (!result.rowCount) {
-      return res.status(404).json({ ok: false, erro: 'Escala nao encontrada' });
-    }
+      if (!result.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ ok: false, erro: 'Escala nao encontrada' });
+      }
 
-    const eventoIdAtual = result.rows[0].evento_id;
-    await syncEventoPagamentoColaboradorFromEscalaSum(pool, eventoIdAtual);
-    if (String(eventoIdAnterior || '') !== String(eventoIdAtual || '')) {
-      await syncEventoPagamentoColaboradorFromEscalaSum(pool, eventoIdAnterior);
+      const statusAnteriorPagamento = escalaTravada?.status_pagamento;
+      const estavaPaga = escalaEstaPaga(statusAnteriorPagamento);
+      const ficouPaga = escalaEstaPaga(result.rows[0].status_pagamento);
+      const actor = req?.auth?.usuario?.id != null ? String(req.auth.usuario.id) : null;
+      if (!estavaPaga && ficouPaga) {
+        await registrarQuitacaoEscala(client, result.rows[0], {
+          dataPagamento: normalizeCivilDate(req.body.data_pagamento),
+          origem: 'status_pago',
+          createdBy: actor,
+          statusAnterior: statusAnteriorPagamento,
+        });
+      } else if (estavaPaga && !ficouPaga) {
+        await reverterQuitacaoEscala(client, result.rows[0], {
+          createdBy: actor,
+          statusAnterior: statusAnteriorPagamento,
+        });
+      }
+
+      const eventoIdAtual = result.rows[0].evento_id;
+      await syncEventoPagamentoColaboradorFromEscalaSum(client, eventoIdAtual);
+      if (String(eventoIdAnterior || '') !== String(eventoIdAtual || '')) {
+        await syncEventoPagamentoColaboradorFromEscalaSum(client, eventoIdAnterior);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
     }
 
     const statusAnterior = String(escalaAnterior?.status_aceite || '').trim();

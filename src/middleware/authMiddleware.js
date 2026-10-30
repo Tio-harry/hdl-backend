@@ -7,10 +7,12 @@ const {
 const ACCESS_PROFILES = {
   GESTOR: 'gestor',
   OPERADOR: 'operador',
+  FINANCEIRO_LEITURA: 'financeiro_leitura',
 };
 
 const ACCESS_PERMISSIONS = {
   FINANCEIRO_VIEW: 'financeiro.view',
+  FINANCEIRO_EDIT: 'financeiro.edit',
   FINANCEIRO_COLABORADOR_VIEW: 'financeiro.colaborador.view',
   CONFIG_ADMIN_VIEW: 'config.admin.view',
   CONTRACTS_DELETE: 'contracts.delete',
@@ -37,6 +39,7 @@ const ACCESS_PERMISSIONS = {
 
 const GESTOR_PERMISSION_LIST = [
   ACCESS_PERMISSIONS.FINANCEIRO_VIEW,
+  ACCESS_PERMISSIONS.FINANCEIRO_EDIT,
   ACCESS_PERMISSIONS.FINANCEIRO_COLABORADOR_VIEW,
   ACCESS_PERMISSIONS.CONFIG_ADMIN_VIEW,
   ACCESS_PERMISSIONS.CONTRACTS_DELETE,
@@ -71,6 +74,11 @@ const OPERADOR_PERMISSION_LIST = [
   ACCESS_PERMISSIONS.SERVICOS_CREATE,
   ACCESS_PERMISSIONS.SERVICOS_EDIT,
   ACCESS_PERMISSIONS.TEXTOS_RAPIDOS_VIEW,
+];
+
+const FINANCEIRO_LEITURA_PERMISSION_LIST = [
+  ACCESS_PERMISSIONS.FINANCEIRO_VIEW,
+  ACCESS_PERMISSIONS.FINANCEIRO_COLABORADOR_VIEW,
 ];
 
 function parseCookieHeader(cookieHeader) {
@@ -155,6 +163,9 @@ async function requireAuth(req, res, next) {
 
 function getPermissionsForProfile(profile) {
   const normalizedProfile = String(profile || '').trim().toLowerCase();
+  if (normalizedProfile === ACCESS_PROFILES.FINANCEIRO_LEITURA) {
+    return new Set(FINANCEIRO_LEITURA_PERMISSION_LIST);
+  }
   return new Set(
     normalizedProfile === ACCESS_PROFILES.OPERADOR
       ? OPERADOR_PERMISSION_LIST
