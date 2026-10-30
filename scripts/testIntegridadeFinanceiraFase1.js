@@ -548,6 +548,42 @@ async function main() {
     }
     console.log('PASS backup automatico inclui todas as tabelas financeiras novas, com contagens corretas');
 
+    // Sem sessao, nenhuma rota de escrita do codigo passa; so /auth continua aberto.
+    const pastaSrc = path.join(__dirname, '../src');
+    const fontes = [path.join(pastaSrc, 'index.js'), ...fs.readdirSync(path.join(pastaSrc, 'routes')).map((nome) => path.join(pastaSrc, 'routes', nome))];
+    const rotasEscrita = new Set();
+    for (const fonte of fontes) {
+      for (const [, metodo, rota] of fs.readFileSync(fonte, 'utf8').matchAll(/(?:app|router)\.(post|put|patch|delete)\(\s*'([^']+)'/g)) {
+        rotasEscrita.add(`${metodo.toUpperCase()} ${rota}`);
+      }
+    }
+    assert.ok(rotasEscrita.size >= 80, `rotas encontradas: ${rotasEscrita.size}`);
+    const antesAnonimo = await fotografia();
+    const semLogin = async (metodo, rota, cabecalhos = {}) => (await fetch(`${base}${rota.replace(/:[A-Za-z]+/g, 'fin-novo')}`, {
+      method: metodo,
+      headers: { 'Content-Type': 'application/json', ...cabecalhos },
+      body: JSON.stringify({ observacoes: 'anonimo', valor_total: 1 }),
+    })).status;
+    for (const item of rotasEscrita) {
+      const [metodo, rota] = item.split(' ');
+      if (rota.startsWith('/auth/')) continue;
+      assert.equal(await semLogin(metodo, rota), 401, item);
+    }
+    assert.equal(await semLogin('PUT', '/eventos/fin-novo', { Cookie: 'hdl_session=token-invalido' }), 401);
+    assert.equal(await fotografia(), antesAnonimo);
+    const loginErrado = await fetch(`${base}/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'fin-test@example.invalid', senha: 'senha-errada' }),
+    });
+    assert.notEqual((await loginErrado.json()).message, undefined);
+    const esqueci = await fetch(`${base}/auth/forgot-password`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'nao-existe@example.invalid' }),
+    });
+    assert.equal(esqueci.status, 200);
+    assert.equal(await statusCom(cookie, '/eventos/fin-novo', 'PUT', { observacoes: 'gestor apos protecao' }), 200);
+    console.log(`PASS sem sessao: ${rotasEscrita.size} rotas de escrita auditadas, 401 fora de /auth, dados intactos`);
+
     // Concorrencia: duas quitacoes simultaneas nao pagam o custo duas vezes.
     const paralelas = await Promise.all([
       fetch(`${base}/eventos/fin-novo/custos-operacionais/deslocamento`, { method: 'PATCH', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify(patchCusto) }),

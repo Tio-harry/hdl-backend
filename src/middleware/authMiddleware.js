@@ -199,20 +199,22 @@ function buildForbiddenResponse(res, message = 'Sem permissao para executar esta
   });
 }
 
-/** Perfil de leitura nunca altera dados, mesmo em rotas sem permissao propria; sessao segue em /auth. */
-async function bloquearEscritaPerfilLeitura(req, res, next) {
+/** Toda escrita exige sessao, e perfil de leitura nunca altera dados; so /auth fica aberto para entrar na conta. */
+async function protegerEscritas(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.path.startsWith('/auth/')) return next();
+  const naoAutenticado = () => res.status(401).json({ ok: false, message: 'Nao autenticado.' });
   const token = getSessionTokenFromRequest(req);
-  if (!token) return next();
+  if (!token) return naoAutenticado();
   try {
     const authContext = await getAuthenticatedUserFromToken(token);
-    if (authContext?.usuario) req.auth = authContext;
+    if (!authContext?.usuario) return naoAutenticado();
+    req.auth = authContext;
     if (String(authContext?.usuario?.perfil || '').trim().toLowerCase() === ACCESS_PROFILES.FINANCEIRO_LEITURA) {
       return buildForbiddenResponse(res, 'Perfil de leitura financeira nao pode alterar dados.');
     }
     return next();
   } catch (error) {
-    if (error instanceof AuthError) return next();
+    if (error instanceof AuthError) return res.status(error.status || 401).json({ ok: false, message: error.message });
     return next(error);
   }
 }
@@ -307,7 +309,7 @@ function requireMutationPermission({
 }
 
 module.exports = {
-  bloquearEscritaPerfilLeitura,
+  protegerEscritas,
   ACCESS_PERMISSIONS,
   ACCESS_PROFILES,
   attachOptionalAuth,

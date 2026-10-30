@@ -13,7 +13,7 @@ const {
 } = require('./services/aiContractOrganizerService');
 const { parseTextosRapidosContratoImport } = require("./services/textosRapidosContratoImportParser");
 const {
-  bloquearEscritaPerfilLeitura,
+  protegerEscritas,
   ACCESS_PERMISSIONS,
   ACCESS_PROFILES,
   requireMutationPermission,
@@ -54,7 +54,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
-app.use(bloquearEscritaPerfilLeitura);
+app.use(protegerEscritas);
 app.use(createAuthRouter());
 app.use(createAdminUsersRouter());
 app.use(createHomeSummaryRouter());
