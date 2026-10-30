@@ -199,6 +199,24 @@ function buildForbiddenResponse(res, message = 'Sem permissao para executar esta
   });
 }
 
+/** Perfil de leitura nunca altera dados, mesmo em rotas sem permissao propria; sessao segue em /auth. */
+async function bloquearEscritaPerfilLeitura(req, res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || req.path.startsWith('/auth/')) return next();
+  const token = getSessionTokenFromRequest(req);
+  if (!token) return next();
+  try {
+    const authContext = await getAuthenticatedUserFromToken(token);
+    if (authContext?.usuario) req.auth = authContext;
+    if (String(authContext?.usuario?.perfil || '').trim().toLowerCase() === ACCESS_PROFILES.FINANCEIRO_LEITURA) {
+      return buildForbiddenResponse(res, 'Perfil de leitura financeira nao pode alterar dados.');
+    }
+    return next();
+  } catch (error) {
+    if (error instanceof AuthError) return next();
+    return next(error);
+  }
+}
+
 function requirePermission(permission, options = {}) {
   const forbiddenMessage = options.message || 'Sem permissao para executar esta acao.';
 
@@ -289,6 +307,7 @@ function requireMutationPermission({
 }
 
 module.exports = {
+  bloquearEscritaPerfilLeitura,
   ACCESS_PERMISSIONS,
   ACCESS_PROFILES,
   attachOptionalAuth,

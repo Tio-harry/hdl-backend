@@ -21,13 +21,14 @@ async function registrarHistorico(client, payload) {
     `
     INSERT INTO escala_pagamento_historico (
       id, escala_evento_id, evento_id, acao, status_anterior, status_novo,
-      pagamento_id, valor, data_pagamento, origem, created_by
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      pagamento_id, valor, data_pagamento, origem, created_by, valor_recreador_anterior, valor_recreador_novo
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     `,
     [
       crypto.randomUUID(), payload.escalaId, payload.eventoId, payload.acao,
       payload.statusAnterior, payload.statusNovo, payload.pagamentoId || null,
       payload.valor || 0, payload.dataPagamento || null, payload.origem, payload.createdBy || null,
+      payload.valorAnterior ?? null, payload.valorNovo ?? null,
     ]
   );
 }
@@ -37,13 +38,16 @@ async function registrarQuitacaoEscala(client, escala, { dataPagamento, origem, 
   const data = dataPagamento || hojeCivilRecife();
   const { rows: [ativos] } = await client.query(
     `
-    SELECT COALESCE(SUM(valor),0) AS total
-    FROM pagamentos_escala_colaborador
-    WHERE escala_evento_id=$1 AND LOWER(TRIM(COALESCE(status,'')))='ativo'
+    SELECT COALESCE(SUM(p.valor),0) AS total,
+           (SELECT COALESCE(e.valor_pago_sem_data,0) FROM escala_eventos e WHERE e.id=$1) AS sem_data
+    FROM pagamentos_escala_colaborador p
+    WHERE p.escala_evento_id=$1 AND LOWER(TRIM(COALESCE(p.status,'')))='ativo'
     `,
     [escala.id]
   );
-  const restante = Math.round((Number(escala.valor_recreador || 0) - Number(ativos.total || 0)) * 100) / 100;
+  const restante = Math.round(
+    (Number(escala.valor_recreador || 0) - Number(ativos.total || 0) - Number(ativos.sem_data || 0)) * 100
+  ) / 100;
   let pagamentoId = null;
   if (restante > 0) {
     pagamentoId = crypto.randomUUID();
@@ -72,15 +76,45 @@ async function registrarQuitacaoEscala(client, escala, { dataPagamento, origem, 
   return { pagamentoId, valor: Math.max(restante, 0), dataPagamento: data };
 }
 
-/** Reverte so o que a marcacao de Pago gerou; adiantamentos reais continuam ativos. */
+/**
+ * Escala paga cujo valor subiu volta a Pendente pelo acrescimo. O pago anterior sem movimento
+ * fica registrado como pago sem data, para nao ser cobrado de novo nem receber data inventada.
+ */
+async function reabrirAcrescimoEscala(client, escala, { valorAnterior }) {
+  const { rows: [atualizada] } = await client.query(
+    `
+    UPDATE escala_eventos e
+    SET status_pagamento='Pendente',
+        valor_pago_sem_data=GREATEST(
+          $2::numeric - COALESCE((
+            SELECT SUM(p.valor) FROM pagamentos_escala_colaborador p
+            WHERE p.escala_evento_id=e.id AND LOWER(TRIM(COALESCE(p.status,'')))='ativo'
+          ),0),
+          0
+        ),
+        updated_at=CURRENT_TIMESTAMP
+    WHERE e.id=$1
+    RETURNING e.*
+    `,
+    [escala.id, valorAnterior]
+  );
+  return atualizada;
+}
+
+/** Desfaz a ultima marcacao de Pago; adiantamentos reais e quitacoes anteriores continuam ativos. */
 async function reverterQuitacaoEscala(client, escala, { createdBy, statusAnterior }) {
   const { rows } = await client.query(
     `
     UPDATE pagamentos_escala_colaborador
     SET status='cancelado',cancelado_em=now(),cancelado_por=$2,updated_at=CURRENT_TIMESTAMP
-    WHERE escala_evento_id=$1
-      AND LOWER(TRIM(COALESCE(status,'')))='ativo'
-      AND origem = ANY($3::text[])
+    WHERE id=(
+      SELECT p.id FROM pagamentos_escala_colaborador p
+      WHERE p.escala_evento_id=$1
+        AND LOWER(TRIM(COALESCE(p.status,'')))='ativo'
+        AND p.origem = ANY($3::text[])
+      ORDER BY p.created_at DESC
+      LIMIT 1
+    )
     RETURNING id,valor
     `,
     [escala.id, createdBy || null, ORIGENS_AUTOMATICAS]
@@ -103,6 +137,7 @@ module.exports = {
   escalaEstaPaga,
   hojeCivilRecife,
   registrarHistorico,
+  reabrirAcrescimoEscala,
   registrarQuitacaoEscala,
   reverterQuitacaoEscala,
 };

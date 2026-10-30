@@ -28,6 +28,8 @@ async function main() {
     }
     const sql = fs.readFileSync(path.join(__dirname, '../db/migrations/001_noite_natal.sql'), 'utf8');
     await db.query(sql);
+    // O backend atual pressupoe a migration financeira, como em producao apos a publicacao.
+    await db.query(fs.readFileSync(path.join(__dirname, '../db/migrations/003_integridade_financeira_fase1.sql'), 'utf8'));
     await db.query(sql);
     await db.query(fs.readFileSync(path.join(__dirname, '../db/migrations/002_funcoes_equipe.sql'), 'utf8'));
     console.log('PASS migration aditiva e idempotente em banco isolado');

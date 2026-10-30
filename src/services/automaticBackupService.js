@@ -143,6 +143,27 @@ async function fetchFinanceiroCofrinhosConfig() {
   return result.rows || [];
 }
 
+const TABELAS_FINANCEIRAS = {
+  financeiroCustosOperacionaisEvento: 'custos_operacionais_evento',
+  financeiroCustosOperacionaisHistorico: 'custos_operacionais_historico',
+  financeiroCustosOperacionaisMovimentos: 'custos_operacionais_movimentos',
+  financeiroEscalaPagamentoHistorico: 'escala_pagamento_historico',
+  financeiroCiclosHistorico: 'ciclos_financeiros_historico',
+  financeiroPagamentosEscala: 'pagamentos_escala_colaborador',
+};
+
+const arquivoDaTabela = (tabela) => `financeiro_${tabela}.json`;
+
+async function fetchTabelasFinanceiras() {
+  const entradas = await Promise.all(
+    Object.entries(TABELAS_FINANCEIRAS).map(async ([chave, tabela]) => {
+      const result = await pool.query(`SELECT * FROM ${tabela} ORDER BY id ASC`);
+      return [chave, result.rows || []];
+    })
+  );
+  return Object.fromEntries(entradas);
+}
+
 async function collectAutomaticBackupData() {
   const agendaEventosFuturos = await fetchAgendaEventosFuturos();
   const eventoIds = agendaEventosFuturos.map((evento) => String(evento.id)).filter(Boolean);
@@ -153,12 +174,14 @@ async function collectAutomaticBackupData() {
     financeiroEventosCriticos,
     financeiroCiclosTravados,
     financeiroCofrinhosConfig,
+    tabelasFinanceiras,
   ] = await Promise.all([
     fetchAgendaEscalasFuturas(eventoIds),
     fetchAgendaServicosFuturos(eventoIds),
     fetchFinanceiroEventosCriticos(),
     fetchFinanceiroCiclosTravados(),
     fetchFinanceiroCofrinhosConfig(),
+    fetchTabelasFinanceiras(),
   ]);
 
   return {
@@ -168,6 +191,7 @@ async function collectAutomaticBackupData() {
     financeiroEventosCriticos,
     financeiroCiclosTravados,
     financeiroCofrinhosConfig,
+    ...tabelasFinanceiras,
   };
 }
 
@@ -187,6 +211,7 @@ function buildManifest({ backupId, generatedAt, fileName, targetDir, datasets })
       'financeiro_eventos_criticos',
       'financeiro_ciclos_travados',
       'financeiro_cofrinhos_config',
+      ...Object.values(TABELAS_FINANCEIRAS).map((tabela) => `financeiro_${tabela}`),
     ],
     contagens: {
       'agenda_eventos_futuros.json': datasets.agendaEventosFuturos.length,
@@ -195,6 +220,9 @@ function buildManifest({ backupId, generatedAt, fileName, targetDir, datasets })
       'financeiro_eventos_criticos.json': datasets.financeiroEventosCriticos.length,
       'financeiro_ciclos_travados.json': datasets.financeiroCiclosTravados.length,
       'financeiro_cofrinhos_config.json': datasets.financeiroCofrinhosConfig.length,
+      ...Object.fromEntries(
+        Object.entries(TABELAS_FINANCEIRAS).map(([chave, tabela]) => [arquivoDaTabela(tabela), datasets[chave].length])
+      ),
     },
     retencao: {
       quantidadeMaxima: BACKUP_RETENTION_COUNT,
@@ -289,6 +317,10 @@ async function generateAutomaticBackup() {
     { name: 'financeiro_eventos_criticos.json', content: serializeJsonFile(datasets.financeiroEventosCriticos) },
     { name: 'financeiro_ciclos_travados.json', content: serializeJsonFile(datasets.financeiroCiclosTravados) },
     { name: 'financeiro_cofrinhos_config.json', content: serializeJsonFile(datasets.financeiroCofrinhosConfig) },
+    ...Object.entries(TABELAS_FINANCEIRAS).map(([chave, tabela]) => ({
+      name: arquivoDaTabela(tabela),
+      content: serializeJsonFile(datasets[chave]),
+    })),
   ], generatedAt);
 
   await fs.writeFile(filePath, zipBuffer);

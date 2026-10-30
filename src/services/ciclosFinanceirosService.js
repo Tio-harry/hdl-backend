@@ -53,7 +53,12 @@ function validarSnapshot(snapshot, { ano, mes, tipo }) {
   const apropriado = numero(totais.custosApropriados, 'custo apropriado');
   const caixa = numero(totais.caixaLivre, 'caixa livre');
   const quitado = numero(totais.custosQuitadosNoPeriodo, 'custo quitado');
-  if (!perto(recebido - retencao - apropriado, caixa)) {
+  const liberacoes = Array.isArray(snapshot.liberacoes) ? snapshot.liberacoes : [];
+  const liberado = numero(totais.liberacoesObrigacao ?? 0, 'liberacao de obrigacao');
+  if (!perto(liberacoes.reduce((sum, row) => sum + Number(row.valor || 0), 0), liberado)) {
+    throw httpError('Snapshot incoerente: composicao das liberacoes difere do total');
+  }
+  if (!perto(recebido - retencao - apropriado + liberado, caixa)) {
     throw httpError('Snapshot incoerente: recebido, retencao, custos e caixa livre nao fecham');
   }
   const somaEventos = snapshot.eventos.reduce((sum, row) => sum + Number(row.recebido || 0), 0);

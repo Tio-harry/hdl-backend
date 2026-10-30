@@ -103,6 +103,7 @@ CREATE TABLE escala_eventos (
   status_pagamento TEXT DEFAULT 'Pendente',
   status_aceite TEXT DEFAULT 'Pendente',
   observacao_escala TEXT,
+  valor_pago_sem_data NUMERIC(10,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -201,6 +202,8 @@ CREATE TABLE escala_pagamento_historico (
   data_pagamento DATE,
   origem TEXT,
   created_by TEXT,
+  valor_recreador_anterior NUMERIC(12,2),
+  valor_recreador_novo NUMERIC(12,2),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX escala_pagamento_historico_escala_idx ON escala_pagamento_historico (escala_evento_id, created_at DESC);

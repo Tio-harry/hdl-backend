@@ -193,8 +193,12 @@ CREATE TABLE IF NOT EXISTS public.escala_pagamento_historico (
   data_pagamento date,
   origem text,
   created_by text,
+  valor_recreador_anterior numeric(12,2),
+  valor_recreador_novo numeric(12,2),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE public.escala_eventos
+  ADD COLUMN IF NOT EXISTS valor_pago_sem_data numeric(10,2) NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS escala_pagamento_historico_escala_idx
   ON public.escala_pagamento_historico (escala_evento_id, created_at DESC);
 

@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { Pool } = require('pg');
@@ -429,6 +430,123 @@ async function main() {
     assert.equal(await statusCom(operador, '/eventos/fin-novo/custos-operacionais/deslocamento', 'PATCH', patchCusto), 403);
     assert.equal((await db.query("SELECT situacao FROM custos_operacionais_evento WHERE evento_id='fin-novo' AND tipo='deslocamento'")).rows[0].situacao, 'PENDENTE');
     console.log('PASS PATCH e travamento exigem financeiro.edit; leitura consulta e nao altera');
+
+    // Perfil de leitura: nenhuma escrita passa, por rota financeira ou geral; leitura segue.
+    const escritasBloqueadas = [
+      ['/eventos/fin-novo', 'PUT', { valor_total: 1, sinal: 1 }],
+      ['/eventos/fin-novo/escalas', 'POST', { colaborador_id: 'fin-c1', valor_recreador: 1 }],
+      ['/escalas-evento/fin-scale-1', 'PUT', { status_pagamento: 'Pago' }],
+      ['/escalas-evento/fin-scale-1', 'DELETE'],
+      ['/escalas-evento/fin-scale-1/pagamentos', 'POST', { valor: 1 }],
+      ['/pagamentos-escala-colaborador/fin-pay-1', 'PUT', { valor: 1 }],
+      ['/pagamentos-escala-colaborador/fin-pay-1/cancelar', 'PATCH'],
+      ['/ciclos-financeiros', 'POST', { ano: 2026, mes: 1, tipo: 'A' }],
+      ['/contracts', 'POST', { nome_contratante: 'x' }],
+    ];
+    const fotografia = async () => JSON.stringify((await db.query(`
+      SELECT (SELECT json_agg(e ORDER BY id) FROM eventos e) AS eventos,
+             (SELECT json_agg(e ORDER BY id) FROM escala_eventos e) AS escalas,
+             (SELECT json_agg(p ORDER BY id) FROM pagamentos_escala_colaborador p) AS pagamentos
+    `)).rows[0]);
+    const antesLeitura = await fotografia();
+    for (const [rota, metodo, corpo] of escritasBloqueadas) {
+      assert.equal(await statusCom(leitura, rota, metodo, corpo), 403, `${metodo} ${rota}`);
+    }
+    assert.equal(await fotografia(), antesLeitura);
+    for (const rota of ['/eventos', '/custos-operacionais', '/ciclos-financeiros', '/cofrinhos-config', '/auth/me']) {
+      assert.equal(await statusCom(leitura, rota), 200, rota);
+    }
+    // Gestor e operador seguem escrevendo em rotas gerais.
+    assert.equal(await statusCom(cookie, '/eventos/fin-novo', 'PUT', { observacoes: 'gestor salva' }), 200);
+    assert.equal(await statusCom(operador, '/eventos/fin-novo', 'PUT', { observacoes: 'operador salva' }), 200);
+    console.log('PASS perfil de leitura: 403 em toda escrita, 200 em leitura, gestor e operador preservados');
+
+    // Escala paga com valor aumentado: acrescimo vira obrigacao e exige novo pagamento datado.
+    await db.query(`
+      INSERT INTO eventos (id,identificador_interno,contratante_nome,data_evento,valor_total,status_financeiro)
+      VALUES ('fin-aumento','ID 310','Aumento','05/10/2026',900,'Em andamento')
+    `);
+    await db.query(`
+      INSERT INTO escala_eventos(id,evento_id,colaborador_id,colaborador_nome,valor_recreador,status_pagamento,status_aceite)
+      VALUES ('fin-aum-mov','fin-aumento','fin-c1','Pessoa 1',100,'Pendente','Confirmado'),
+             ('fin-aum-antiga','fin-aumento','fin-c2','Pessoa 2',100,'Pago','Confirmado')
+    `);
+    await request('/escalas-evento/fin-aum-mov', { method: 'PUT', body: { status_pagamento: 'Pago', data_pagamento: '2026-10-05' } });
+    const resumoAumento = async () => {
+      const row = (await request('/eventos')).find((item) => item.id === 'fin-aumento');
+      return [Number(row.soma_valor_recreador), Number(row.soma_valor_recreador_pago), Number(row.soma_valor_recreador_pendente)];
+    };
+    assert.deepEqual(await resumoAumento(), [200, 200, 0]);
+    const aumentada = await request('/escalas-evento/fin-aum-mov', { method: 'PUT', body: { valor_recreador: 150 } });
+    assert.equal(aumentada.status_pagamento, 'Pendente');
+    assert.deepEqual(await resumoAumento(), [250, 200, 50]);
+    await request('/escalas-evento/fin-aum-mov', { method: 'PUT', body: { status_pagamento: 'Pago', data_pagamento: '2026-11-03' } });
+    const movimentosAumento = await db.query(`
+      SELECT valor,to_char(data_pagamento,'YYYY-MM-DD') AS data FROM pagamentos_escala_colaborador
+      WHERE escala_evento_id='fin-aum-mov' AND status='ativo' ORDER BY data_pagamento
+    `);
+    assert.deepEqual(movimentosAumento.rows.map((row) => [Number(row.valor), row.data]), [[100, '2026-10-05'], [50, '2026-11-03']]);
+    assert.deepEqual(await resumoAumento(), [250, 250, 0]);
+    // Reverter a segunda quitacao mantem a primeira.
+    await request('/escalas-evento/fin-aum-mov', { method: 'PUT', body: { status_pagamento: 'Pendente' } });
+    assert.deepEqual(await resumoAumento(), [250, 200, 50]);
+    // Escala antiga, paga sem movimento: 100 seguem pagos sem data e so 40 ficam devidos.
+    await request('/escalas-evento/fin-aum-antiga', { method: 'PUT', body: { valor_recreador: 140 } });
+    assert.deepEqual(await resumoAumento(), [290, 200, 90]);
+    assert.equal((await db.query("SELECT valor_pago_sem_data FROM escala_eventos WHERE id='fin-aum-antiga'")).rows[0].valor_pago_sem_data, '100.00');
+    assert.equal((await db.query("SELECT COUNT(*)::int AS total FROM pagamentos_escala_colaborador WHERE escala_evento_id='fin-aum-antiga'")).rows[0].total, 0);
+    await request('/escalas-evento/fin-aum-antiga', { method: 'PUT', body: { status_pagamento: 'Pago', data_pagamento: '2026-11-04' } });
+    const pagoAntiga = await db.query("SELECT valor,to_char(data_pagamento,'YYYY-MM-DD') AS data FROM pagamentos_escala_colaborador WHERE escala_evento_id='fin-aum-antiga'");
+    assert.deepEqual(pagoAntiga.rows.map((row) => [Number(row.valor), row.data]), [[40, '2026-11-04']]);
+    const ajustes = await db.query("SELECT valor_recreador_anterior,valor_recreador_novo FROM escala_pagamento_historico WHERE escala_evento_id='fin-aum-antiga' AND acao='AJUSTE_VALOR'");
+    assert.deepEqual(ajustes.rows.map((row) => [Number(row.valor_recreador_anterior), Number(row.valor_recreador_novo)]), [[100, 140]]);
+    // Reduzir valor de escala paga nao reabre.
+    const reduzida = await request('/escalas-evento/fin-aum-antiga', { method: 'PUT', body: { valor_recreador: 120 } });
+    assert.equal(reduzida.status_pagamento, 'Pago');
+    console.log('PASS escala paga com aumento: diferenca pendente, novo movimento datado, sem data inventada');
+
+    // Snapshot com liberacao de obrigacao precisa fechar.
+    const snapshotLiberacao = {
+      ...snapshotBase,
+      ciclo: { ano: 2026, mes: 10, tipo: 'B', inicio: '2026-10-15', fim: '2026-10-28' },
+      totais: { ...snapshotBase.totais, caixaLivre: 260, liberacoesObrigacao: 60 },
+      liberacoes: [{ eventoId: 'fin-modern', valor: 60 }],
+      cofrinhos: [{ key: 'gestor', nome: 'Gestor', percentual: 1, valor: 260 }],
+    };
+    await request('/ciclos-financeiros/travar', { method: 'POST', body: { ano: 2026, mes: 10, tipo: 'B', snapshot: { ...snapshotLiberacao, liberacoes: [] } }, expected: 400 });
+    await request('/ciclos-financeiros/travar', { method: 'POST', body: { ano: 2026, mes: 10, tipo: 'B', snapshot: snapshotLiberacao }, expected: 201 });
+    console.log('PASS snapshot valida liberacao de obrigacao');
+
+    // Backup automatico inclui as tabelas financeiras e grava so na pasta temporaria.
+    const pastaBackup = fs.mkdtempSync(path.join(os.tmpdir(), 'hdl-backup-teste-'));
+    try {
+      const backup = spawnSync(process.execPath, ['-e', `
+        require('./src/services/automaticBackupService').generateAutomaticBackup()
+          .then((r) => { console.log(JSON.stringify(r)); process.exit(0); })
+          .catch((e) => { console.error(e); process.exit(1); });
+      `], {
+        cwd: path.join(__dirname, '..'),
+        env: { ...process.env, DATABASE_URL: source.href, BACKUP_AUTOMATIC_ROOT_DIR: pastaBackup },
+        encoding: 'utf8',
+      });
+      assert.equal(backup.status, 0, backup.stderr);
+      const gerado = JSON.parse(backup.stdout.trim().split('\n').pop());
+      assert.ok(gerado.arquivo.caminho.startsWith(pastaBackup));
+      const tabelas = await db.query(`
+        SELECT t.tabela, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I', t.tabela), false, true, '')))[1]::text::int AS total
+        FROM unnest(ARRAY['custos_operacionais_evento','custos_operacionais_historico','custos_operacionais_movimentos',
+          'escala_pagamento_historico','ciclos_financeiros_historico','pagamentos_escala_colaborador']) AS t(tabela)
+      `);
+      const zip = fs.readFileSync(gerado.arquivo.caminho).toString('latin1');
+      for (const { tabela, total } of tabelas.rows) {
+        assert.ok(total > 0, tabela);
+        assert.equal(gerado.contagens[`financeiro_${tabela}.json`], total, tabela);
+        assert.ok(zip.includes(`financeiro_${tabela}.json`), tabela);
+      }
+    } finally {
+      fs.rmSync(pastaBackup, { recursive: true, force: true });
+    }
+    console.log('PASS backup automatico inclui todas as tabelas financeiras novas, com contagens corretas');
 
     // Concorrencia: duas quitacoes simultaneas nao pagam o custo duas vezes.
     const paralelas = await Promise.all([

@@ -13,6 +13,7 @@ const {
 } = require('./services/aiContractOrganizerService');
 const { parseTextosRapidosContratoImport } = require("./services/textosRapidosContratoImportParser");
 const {
+  bloquearEscritaPerfilLeitura,
   ACCESS_PERMISSIONS,
   ACCESS_PROFILES,
   requireMutationPermission,
@@ -34,6 +35,7 @@ const {
   hojeCivilRecife,
   registrarHistorico: registrarHistoricoEscala,
   registrarQuitacaoEscala,
+  reabrirAcrescimoEscala,
   reverterQuitacaoEscala,
 } = require('./services/escalaPagamentosService');
 const { validarFuncaoEscala } = require('./services/funcoesEquipeService');
@@ -52,6 +54,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+app.use(bloquearEscritaPerfilLeitura);
 app.use(createAuthRouter());
 app.use(createAdminUsersRouter());
 app.use(createHomeSummaryRouter());
@@ -2155,6 +2158,7 @@ async function ensureEscalaEventosTable() {
   await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS status_pagamento TEXT DEFAULT 'Pendente'`);
   await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS status_aceite TEXT DEFAULT 'Pendente'`);
   await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS observacao_escala TEXT`);
+  await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS valor_pago_sem_data NUMERIC(10,2) NOT NULL DEFAULT 0`);
   await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
   await pool.query(`ALTER TABLE escala_eventos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
 }
@@ -2885,13 +2889,13 @@ app.get('/eventos', async (req, res) => {
             CASE
               WHEN LOWER(TRIM(COALESCE(ee.status_pagamento, ''))) = 'pago'
                 THEN COALESCE(ee.valor_recreador, 0)
-              ELSE LEAST(COALESCE(ee.valor_recreador, 0), COALESCE(pg.total_ativo, 0))
+              ELSE LEAST(COALESCE(ee.valor_recreador, 0), COALESCE(pg.total_ativo, 0) + COALESCE(ee.valor_pago_sem_data, 0))
             END
           ), 0) AS soma_valor_recreador_pago,
           COALESCE(SUM(
             CASE
               WHEN LOWER(TRIM(COALESCE(ee.status_pagamento, ''))) = 'pago' THEN 0
-              ELSE GREATEST(COALESCE(ee.valor_recreador, 0) - COALESCE(pg.total_ativo, 0), 0)
+              ELSE GREATEST(COALESCE(ee.valor_recreador, 0) - COALESCE(pg.total_ativo, 0) - COALESCE(ee.valor_pago_sem_data, 0), 0)
             END
           ), 0) AS soma_valor_recreador_pendente
         FROM escala_eventos ee
@@ -6697,7 +6701,7 @@ app.put('/escalas-evento/:id', async (req, res) => {
     try {
       await client.query('BEGIN');
       const { rows: [escalaTravada] } = await client.query(
-        'SELECT status_pagamento FROM escala_eventos WHERE id = $1 FOR UPDATE',
+        'SELECT status_pagamento, valor_recreador FROM escala_eventos WHERE id = $1 FOR UPDATE',
         [req.params.id]
       );
       result = await client.query(`
@@ -6716,7 +6720,38 @@ app.put('/escalas-evento/:id', async (req, res) => {
       const estavaPaga = escalaEstaPaga(statusAnteriorPagamento);
       const ficouPaga = escalaEstaPaga(result.rows[0].status_pagamento);
       const actor = req?.auth?.usuario?.id != null ? String(req.auth.usuario.id) : null;
-      if (!estavaPaga && ficouPaga) {
+      const valorAnterior = Number(escalaTravada?.valor_recreador || 0);
+      const valorNovo = Number(result.rows[0].valor_recreador || 0);
+      if (valorNovo !== valorAnterior) {
+        await registrarHistoricoEscala(client, {
+          escalaId: req.params.id,
+          eventoId: result.rows[0].evento_id,
+          acao: 'AJUSTE_VALOR',
+          statusAnterior: statusAnteriorPagamento,
+          statusNovo: result.rows[0].status_pagamento,
+          valor: Math.abs(valorNovo - valorAnterior),
+          valorAnterior,
+          valorNovo,
+          origem: 'escala',
+          createdBy: actor,
+        });
+      }
+      if (estavaPaga && valorNovo > valorAnterior) {
+        // O que ja estava pago continua pago; o acrescimo so quita com novo pagamento datado.
+        result = { rows: [await reabrirAcrescimoEscala(client, result.rows[0], { valorAnterior })] };
+        if (updateFields.includes('status_pagamento') && ficouPaga) {
+          await registrarQuitacaoEscala(client, result.rows[0], {
+            dataPagamento: normalizeCivilDate(req.body.data_pagamento),
+            origem: 'status_pago',
+            createdBy: actor,
+            statusAnterior: 'Pendente',
+          });
+          result = await client.query(
+            `UPDATE escala_eventos SET status_pagamento = 'Pago', updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *`,
+            [req.params.id]
+          );
+        }
+      } else if (!estavaPaga && ficouPaga) {
         await registrarQuitacaoEscala(client, result.rows[0], {
           dataPagamento: normalizeCivilDate(req.body.data_pagamento),
           origem: 'status_pago',
