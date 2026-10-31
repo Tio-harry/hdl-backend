@@ -22,7 +22,8 @@ concurrency:
 jobs:
   verificar:
     name: Testes com PostgreSQL descartável
-    runs-on: ubuntu-latest
+    # Fixo em 24.04: o cliente PostgreSQL 16 (mesma versão da produção e do banco do job) existe nele.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -66,12 +67,15 @@ jobs:
         run: npm ci
       - name: Sintaxe de src/ e scripts/ (node --check)
         run: find src scripts -name '*.js' -print0 | xargs -0 -n1 node --check
-      - name: Ferramentas do cliente PostgreSQL
+      # pg_dump de versão MAIS NOVA que o banco gera comandos que o banco não entende
+      # (ex.: transaction_timeout), então o cliente tem de ser o 16, igual ao servidor.
+      - name: Cliente PostgreSQL 16 (mesma versão do banco)
         run: |
-          if ! ls /usr/lib/postgresql/*/bin/pg_dump >/dev/null 2>&1; then
+          if [ ! -x /usr/lib/postgresql/16/bin/pg_dump ]; then
             sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-16
           fi
-          echo "PG_BIN=$(dirname "$(ls /usr/lib/postgresql/*/bin/pg_dump | sort -V | tail -1)")" >> "$GITHUB_ENV"
+          echo "PG_BIN=/usr/lib/postgresql/16/bin" >> "$GITHUB_ENV"
+          /usr/lib/postgresql/16/bin/pg_dump --version
       - name: Banco de origem (estrutura de produção anterior à migration 003, sem dados)
         run: '"$PG_BIN/psql" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f db/ci/base-schema-pre003.sql'
       - name: Parser de contratos
