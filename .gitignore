@@ -3,3 +3,4 @@ node_modules/
 backups/
 *.log
 auth_cookie_test.txt
+.claude/settings.local.json
