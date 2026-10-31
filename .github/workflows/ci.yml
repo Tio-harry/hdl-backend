@@ -77,12 +77,12 @@ jobs:
       - name: Parser de contratos
         env:
           NODE_OPTIONS: --require ${{ github.workspace }}/.github/ci/bloquear-rede.cjs
-        run: npm run test:contract-parser
+        run: bash .github/ci/rodar-e-anotar.sh npm run test:contract-parser
       - name: Noite de Natal
         env:
           NODE_OPTIONS: --require ${{ github.workspace }}/.github/ci/bloquear-rede.cjs
-        run: node scripts/testNoiteNatal.js
+        run: bash .github/ci/rodar-e-anotar.sh node scripts/testNoiteNatal.js
       - name: Integridade financeira (fase 1)
         env:
           NODE_OPTIONS: --require ${{ github.workspace }}/.github/ci/bloquear-rede.cjs
-        run: npm run test:financeiro-fase1
+        run: bash .github/ci/rodar-e-anotar.sh npm run test:financeiro-fase1
