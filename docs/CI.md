@@ -13,6 +13,7 @@ Workflow: `.github/workflows/ci.yml`. Roda em push e pull request para `main` (i
 6. `npm run test:financeiro-fase1`.
 
 ## Como ler uma falha
+- Falhas de teste e de build também aparecem como anotação **“Teste falhou”** no topo da página da execução, com o comando e as últimas linhas da saída (não precisa abrir o log).
 - O primeiro passo vermelho é a causa; abra-o e leia a última mensagem.
 - `git diff --check`: espaço sobrando no fim da linha ou marcador de conflito, no arquivo e linha indicados.
 - Teste: a última linha `PASS` mostra até onde chegou; a mensagem seguinte é o defeito.
@@ -22,4 +23,6 @@ Workflow: `.github/workflows/ci.yml`. Roda em push e pull request para `main` (i
 Deploy, migrations em produção, validação visual (UAT), `testCustosNatal`, `testFuncoesEquipe` e `testContractNatal*` (este chama IA externa).
 
 ## Banco base
+O job usa `ubuntu-24.04` e o cliente PostgreSQL 16 (mesma versão da produção e do banco do job): um `pg_dump` mais novo gera comandos que o banco 16 não entende (ex.: `transaction_timeout`).
+
 `db/ci/base-schema-pre003.sql` é só estrutura (sem dados) do banco de produção antes da migration 003, extraída do backup de 30/10/2026. Os testes aplicam as migrations 001–003 por cima, como na produção. Se uma migration futura alterar o schema base, gere uma nova estrutura e atualize o arquivo.
