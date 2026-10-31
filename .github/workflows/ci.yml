@@ -1,0 +1,88 @@
+name: CI
+
+# Verificação automática. NÃO faz deploy, não usa SSH nem secrets e não acessa produção.
+# Detalhes e como ler uma falha: docs/CI.md
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.claude/**', '.gitignore']
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', '.claude/**', '.gitignore']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    name: Testes com PostgreSQL descartável
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hdl_ci_source
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hdl_ci_source"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI: true
+      EMAIL_ENABLED: 'false'
+      # Valores somente de teste, para o PostgreSQL descartável deste job.
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hdl_ci_source
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Espaços em branco no que foi enviado (git diff --check)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          base="$BASE_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git rev-parse HEAD~1 2>/dev/null || git hash-object -t tree /dev/null)"
+          fi
+          git -c core.whitespace=cr-at-eol diff --check "$base" HEAD -- . ':!*.md'
+      - name: Instalar dependências (npm ci)
+        run: npm ci
+      - name: Sintaxe de src/ e scripts/ (node --check)
+        run: find src scripts -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Ferramentas do cliente PostgreSQL
+        run: |
+          if ! ls /usr/lib/postgresql/*/bin/pg_dump >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client-16
+          fi
+          echo "PG_BIN=$(dirname "$(ls /usr/lib/postgresql/*/bin/pg_dump | sort -V | tail -1)")" >> "$GITHUB_ENV"
+      - name: Banco de origem (estrutura de produção anterior à migration 003, sem dados)
+        run: '"$PG_BIN/psql" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f db/ci/base-schema-pre003.sql'
+      - name: Parser de contratos
+        env:
+          NODE_OPTIONS: --require ${{ github.workspace }}/.github/ci/bloquear-rede.cjs
+        run: npm run test:contract-parser
+      - name: Noite de Natal
+        env:
+          NODE_OPTIONS: --require ${{ github.workspace }}/.github/ci/bloquear-rede.cjs
+        run: node scripts/testNoiteNatal.js
+      - name: Integridade financeira (fase 1)
+        env:
+          NODE_OPTIONS: --require ${{ github.workspace }}/.github/ci/bloquear-rede.cjs
+        run: npm run test:financeiro-fase1

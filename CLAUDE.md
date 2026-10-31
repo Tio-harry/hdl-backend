@@ -33,3 +33,7 @@ Fluxo padrão sem perguntar: escopo ok, testes verdes, `git diff`/`git diff --ch
 Pare se a tarefa for só leitura ou disser NÃO COMMITAR/PUSH, ou se houver blocker, teste crítico falhando, arquivo
 inesperado, alteração fora do escopo, conflito ou trabalho anterior de outra tarefa. Nunca `git add .`/`-A`/`--all`
 nem push forçado. Commit/push não autoriza deploy: deploy só se a tarefa autorizar (alto risco: siga a regra da tarefa).
+
+## CI (GitHub Actions)
+Roda em todo push/PR para main (ignora só docs e `.claude`), com PostgreSQL descartável e rede externa bloqueada: `git diff --check`, `npm ci`, sintaxe, contract-parser, testNoiteNatal, financeiro fase 1. Detalhes e como ler falhas: `docs/CI.md`.
+Não faz deploy nem usa secrets. Localmente rode só o teste focado; a regressão completa fica por conta do CI.
