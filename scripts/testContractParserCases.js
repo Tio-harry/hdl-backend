@@ -8,6 +8,7 @@ const REPORT_PATH = path.join(ROOT, 'tests', 'contract-parser-report.md');
 
 const FIELDS_TO_COMPARE = [
   'nome_contratante',
+  'contato_contratante',
   'local',
   'data_evento',
   'dia_semana',
@@ -19,9 +20,11 @@ const FIELDS_TO_COMPARE = [
   'aniversariante',
   'tema',
   'espaco',
+  'informacoes',
   'servico_contratado',
   'extras',
   'valor_total',
+  'itens_valores',
   'entrada',
   'saldo'
 ];
@@ -75,6 +78,16 @@ function toNumber(value) {
 function compareField(field, expected, received) {
   if (expected === undefined) {
     return { skipped: true };
+  }
+
+  if (field === 'itens_valores' || field === 'contato_contratante') {
+    const expectedJson = JSON.stringify(expected);
+    const receivedJson = JSON.stringify(received);
+    return { ok: expectedJson === receivedJson, expected: expectedJson, received: receivedJson };
+  }
+
+  if (field === 'data_evento') {
+    expected = expected.replace('{ano_atual}', new Date().getFullYear());
   }
 
   if (NUMERIC_FIELDS.has(field) || (canBeNumeric(expected) && canBeNumeric(received))) {

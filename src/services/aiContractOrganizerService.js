@@ -1,4 +1,7 @@
 const { extractContractContact } = require('./contractContact');
+const { prepareContractIntake } = require('./contractInput');
+const { parseContractText } = require('./contractTextParser');
+const { applyContractExtractionRules } = require('./contractExtractionRules');
 
 const REQUIRED_OUTPUT_KEYS = [
   'nome_contratante',
@@ -282,15 +285,6 @@ function shouldKeepIncerto(item, flags) {
     return false;
   }
   return true;
-}
-
-function computeHorarioFimPadrao(horarioInicio) {
-  const match = String(horarioInicio || '').match(/^(\d{2}):(\d{2})$/);
-  if (!match) return '';
-  const total = Number(match[1]) * 60 + Number(match[2]) + 180;
-  const hh = Math.floor((total % (24 * 60)) / 60);
-  const mm = total % 60;
-  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
 function computeDiaSemana(dataEvento) {
@@ -1091,7 +1085,7 @@ function normalizeAndValidateModelPayload(payload, dateReference = getDateRefere
     dados[key] = cleanString(rawDados[key]);
   }
 
-  // Only accept a phone explicitly associated with the contracting customer.
+  // Only accept a phone associated with the contracting customer in the source.
   dados.contato_contratante = extractContractContact(textoBruto);
 
   for (const key of NUMBER_KEYS) {
@@ -1112,13 +1106,6 @@ function normalizeAndValidateModelPayload(payload, dateReference = getDateRefere
   }
   dados.horario_inicio = normalizeHora(dados.horario_inicio);
   dados.horario_fim = normalizeHora(dados.horario_fim);
-
-  if (dados.horario_inicio && !dados.horario_fim) {
-    dados.horario_fim = computeHorarioFimPadrao(dados.horario_inicio);
-    if (dados.horario_fim) {
-      alertas.push('Horário final não informado; assumida duração padrão de 3 horas.');
-    }
-  }
 
   dados.horario_chegada = dados.horario_inicio ? computeHorarioChegada(dados.horario_inicio) : '';
   if (dados.horario_chegada) {
@@ -1214,7 +1201,7 @@ function buildSystemPrompt(dateReference = getDateReference()) {
     '7) Estrutura de saída obrigatória:',
     '{ "dados": { ... }, "faltantes": [], "incertos": [], "alertas": [], "confianca": 0.0 }',
     '8) Campos obrigatórios dentro de dados:',
-    'contato_contratante: telefone explicitamente rotulado como Contato/Telefone/WhatsApp/Celular da contratante. Preserve +, parenteses, hifens e codigo de pais. Nao use DDD como criterio, nao copie contato da empresa e nao invente numeros. Ausencia: null.',
+    'contato_contratante: telefone da contratante conforme indicado no texto. Preserve +, parênteses, hífens e código de país. Ausência: null.',
     'nome_contratante, local, data_evento, dia_semana, horario_inicio, horario_fim, horario_chegada, qtd_criancas, faixa_etaria, aniversariante, tema, espaco, servico_contratado, valor_total, entrada, saldo, informacoes;',
     'campo opcional em dados: extras (texto dos extras separados por vírgula).',
     '9) Campo opcional de topo permitido: itens_discriminados (array de objetos { "descricao": string, "valor": number|null }).',
@@ -1225,11 +1212,12 @@ function buildSystemPrompt(dateReference = getDateReference()) {
     '14) Se ano não vier na data, assumir ano atual e registrar alerta "Ano do evento não informado; assumido automaticamente como [ano].".',
     '15) dia_semana: calcular pela data_evento em português quando possível.',
     '16) horario_inicio e horario_fim: aceitar 15hrs, 15hr, 15h, 15 hs, 15 horas, 15h00, 15h30, 15:00, 15.00, 8hrs, 8h30, às 15, das 15 às 18, 15h às 18h; saída HH:MM. Reconhecer os rótulos Horário que inicia, Horário de início, Horário inicial, Hora que inicia, Hora de início e Início, com ou sem acentos.',
-    '17) Preservar fim explícito; senão usar duração explícita. Sem ambos, somente para serviço Visita Noite de Natal (inclusive com Papai Noel/Duende), fim = início +20min. Outros serviços continuam +3h. Informar o padrão efetivamente aplicado nos alertas.',
+    '17) Preencha horario_fim somente quando o fim ou a duração estiver explícito no texto. A regra cadastrada de 20 minutos para a opção Visita Noite de Natal é aplicada pelo backend quando o texto confirma a opção. Papai Noel e Noite de Natal, por si só, nunca indicam duração. Deixe o fim vazio na ausência de evidência.',
     '18) horario_chegada: sempre 20 minutos antes de horario_inicio.',
     '19) contato_hora_do_lazer, se existir no schema do contexto, deve ser sempre "(81) 99761-7476".',
     '20) CRÍTICO — servico_contratado: somente a descrição do SERVIÇO PRINCIPAL (uma linha); máximo ~150 caracteres no backend;',
     'NUNCA incluir bloco "Dados:", listas de nomes de crianças, endereço, nem colar o texto bruto/instruções.',
+    'Use os rótulos do formulário para identificar o campo, mesmo quando o valor estiver na linha seguinte. Remova os rótulos de todos os campos, extras e itens, inclusive "Dados para o contrato", "Local e ponto de referência" e "Qual a opção contratada?".',
     '21) CRÍTICO — itens_discriminados: descrições CURTAS por item (ex.: "1 recreador", "caça ao tesouro") + valor;',
     'nunca listas longas, nem texto bruto; máximo ~80 caracteres por descrição no backend.',
     '22) Classificação serviço principal vs EXTRA:',
@@ -1455,15 +1443,42 @@ async function organizeContractTextWithAI({ texto_bruto, contexto }) {
     throw new AIContractOrganizerError('Campo texto_bruto é obrigatório.', 400);
   }
 
+  const intake = prepareContractIntake(textoBruto);
+  const source = intake.text || textoBruto;
   const dateReference = getDateReference();
-  const apiData = await callOpenAI(textoBruto, isPlainObject(contexto) ? contexto : {}, dateReference);
+  const apiData = await callOpenAI(source, isPlainObject(contexto) ? contexto : {}, dateReference);
   const responseText = extractResponseText(apiData);
   const modelPayload = parseModelJson(responseText);
-  const normalizedPayload = normalizeAndValidateModelPayload(modelPayload, dateReference, textoBruto);
-  const extraction = require('./contractExtractionRules').applyContractExtractionRules(normalizedPayload.dados, textoBruto);
+  const normalizedPayload = normalizeAndValidateModelPayload(modelPayload, dateReference, source);
+  const parsed = parseContractText(textoBruto).extracted;
+  // Use the source service to verify the registered duration rule, never the model's guess.
+  const extraction = applyContractExtractionRules({
+    ...normalizedPayload.dados,
+    ...(intake.fields.local && { local: parsed.local }),
+    ...(intake.fields.data && { data_evento: parsed.data_evento, dia_semana: parsed.dia_semana }),
+    ...(intake.fields.inicio && {
+      horario_inicio: cleanString(parsed.horario_inicio).replace(/^Não informado$/, ''),
+      horario_chegada: cleanString(parsed.horario_chegada).replace(/^Não informado$/, ''),
+    }),
+    horario_fim: '',
+    servico_contratado: parsed.servico_contratado,
+  }, source);
+  if (intake.fields.opcao) {
+    extraction.extras = parsed.extras;
+    if (parsed.itens_valores.length) {
+      normalizedPayload.itens_discriminados = parsed.itens_valores;
+      extraction.valor_total = parsed.valor_total;
+      extraction.entrada = parsed.entrada;
+      extraction.saldo = parsed.saldo;
+    }
+  } else {
+    extraction.servico_contratado = normalizedPayload.dados.servico_contratado;
+  }
   if (extraction.horario_fim !== normalizedPayload.dados.horario_fim) {
-    normalizedPayload.alertas = normalizedPayload.alertas.filter((alert) => !/3 horas|tr[eê]s horas/i.test(alert));
-    normalizedPayload.alertas.push(`Horário final conferido com o texto e serviço informado: ${extraction.horario_fim}.`);
+    normalizedPayload.alertas = normalizedPayload.alertas.filter((alert) => !/hor[aá]rio final|dura[cç][aã]o/i.test(alert));
+    if (extraction.horario_fim) {
+      normalizedPayload.alertas.push(`Horário final conferido com o texto e serviço informado: ${extraction.horario_fim}.`);
+    }
   }
   const finalReturn = {
     ok: true,

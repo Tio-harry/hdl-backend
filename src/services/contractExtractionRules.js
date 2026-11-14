@@ -13,7 +13,7 @@ function extractLabeledContractName(text) {
 }
 
 function isChristmasNightVisit(service) {
-  return /\bvisita noite de natal\b/.test(normalize(service).replace(/[^a-z0-9]+/g, ' ').trim());
+  return /^visita noite de natal\b/.test(normalize(service).replace(/[^a-z0-9]+/g, ' ').trim());
 }
 
 function time(value) {
@@ -36,7 +36,7 @@ function applyContractExtractionRules(fields, source) {
   const text = normalize(source);
   const token = '(\\d{1,2}(?::\\d{2}|h(?:\\d{2})?))';
   const range = text.match(new RegExp(`\\b${token}\\s*(?:as|a|ate|[-\\u2013\\u2014])\\s*${token}\\b`));
-  const endLabel = text.match(new RegExp(`(?:horario\\s+(?:final|fim|de termino)|termino|fim)\\s*:\\s*${token}\\b`));
+  const endLabel = text.match(new RegExp(`^(?:horario\\s+(?:final|fim|de termino)|termino|fim)(?:\\s*:\\s*|\\s+)${token}\\b`, 'm'));
   if (range && time(range[1]) !== null && time(range[2]) !== null) {
     result.horario_inicio = formatTime(time(range[1]));
     result.horario_fim = formatTime(time(range[2]));

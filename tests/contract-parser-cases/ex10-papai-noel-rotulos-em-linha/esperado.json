@@ -1,0 +1,16 @@
+{
+  "nome_contratante": "Marina de Souza Pereira",
+  "local": "Creche Jardim do Sol, Casa Forte, Recife",
+  "data_evento": "22/12/2026",
+  "horario_inicio": "10:00",
+  "horario_fim": null,
+  "servico_contratado": "Papai Noel",
+  "extras": "Sem extras",
+  "valor_total": 500,
+  "itens_valores": [
+    {
+      "descricao": "Papai Noel",
+      "valor": 500
+    }
+  ]
+}

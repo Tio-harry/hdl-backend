@@ -5,6 +5,7 @@
 
 const { extractContractContact, withoutContractContact } = require('./contractContact');
 const { applyContractExtractionRules, extractLabeledContractName, isChristmasNightVisit } = require('./contractExtractionRules');
+const { prepareContractIntake } = require('./contractInput');
 
 function normalizeText(value) {
   if (!value) return "";
@@ -685,10 +686,9 @@ function extractServiceMoneyItems(text) {
     const descricao = cleanExtractedValue(
       line
         .replace(/\s*(?:r\$\s*[\d\.\,]+|\d{1,6}[.,]\d{2}|\d{1,6}\s*reais?)\s*$/i, "")
-        .replace(/[Ã¢â‚¬â€œÃ¢â‚¬â€-]+/g, " ")
     );
 
-    if (!descricao || !/[A-Za-zÃƒâ‚¬-ÃƒÂ¿]/.test(descricao)) continue;
+    if (!descricao || !/\p{L}/u.test(descricao)) continue;
 
     items.push({
       descricao: cleanServico(descricao),
@@ -1942,6 +1942,9 @@ function extractLooseEspaco(text) {
     return "Salão de festa do condomínio";
   }
 
+  const brinquedoteca = splitLines(text).find((line) => normalizeText(line) === "brinquedoteca");
+  if (brinquedoteca) return brinquedoteca;
+
   return extractSpaceCandidate(text) || NOT_INFORMED;
 }
 
@@ -1959,6 +1962,9 @@ function extractLooseInformacoes(originalText, looseText) {
   }
 
   const lines = splitLines(looseText);
+  const context = lines.find((line) => /^(?:festa de casamento|casamento)$/i.test(line));
+  if (context) return context;
+
   for (const line of lines) {
     const cleaned = cleanExtractedValue(line);
     const normalized = normalizeText(cleaned);
@@ -2233,10 +2239,17 @@ function parseContractTextWithoutContact(text) {
 }
 
 function parseContractText(text) {
-  const result = parseContractTextWithoutContact(withoutContractContact(text));
+  const contato = extractContractContact(text);
+  const intake = prepareContractIntake(text);
+  const source = withoutContractContact(intake.text, contato);
+  const result = parseContractTextWithoutContact(source);
+  const fields = {
+    ...result.extracted,
+    ...(intake.fields.opcao && { horario_fim: NOT_INFORMED }),
+  };
   return buildParsedResponse({
-    ...applyContractExtractionRules(result.extracted, text),
-    contato_contratante: extractContractContact(text),
+    ...applyContractExtractionRules(fields, source),
+    contato_contratante: contato,
     texto_original: clean(text),
   });
 }

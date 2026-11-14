@@ -1,0 +1,28 @@
+{
+  "nome_contratante": "Bárbara Karine de Almeida",
+  "contato_contratante": "81 9 0000 0414",
+  "local": "Quintal das Flores - Rua das Palmeiras, 262, Casa Caiada, Olinda",
+  "data_evento": "29/11/2026",
+  "horario_inicio": "13:00",
+  "horario_fim": "17:00",
+  "qtd_criancas": "8",
+  "faixa_etaria": "2 a 10 anos",
+  "espaco": "Brinquedoteca",
+  "informacoes": "Festa de casamento",
+  "servico_contratado": "1 recreador",
+  "valor_total": 425,
+  "itens_valores": [
+    {
+      "descricao": "1 recreador",
+      "valor": 300
+    },
+    {
+      "descricao": "1h adicional",
+      "valor": 80
+    },
+    {
+      "descricao": "esculturas de balões",
+      "valor": 45
+    }
+  ]
+}

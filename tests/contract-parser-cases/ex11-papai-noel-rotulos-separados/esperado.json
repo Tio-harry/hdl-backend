@@ -1,0 +1,16 @@
+{
+  "nome_contratante": "Dalva cavalcanti de Santana lima",
+  "local": "Clube de Golfe do Recife",
+  "data_evento": "13/12/{ano_atual}",
+  "horario_inicio": "18:00",
+  "horario_fim": null,
+  "servico_contratado": "Papai Noel",
+  "extras": "Sem extras",
+  "valor_total": 500,
+  "itens_valores": [
+    {
+      "descricao": "Papai Noel",
+      "valor": 500
+    }
+  ]
+}
