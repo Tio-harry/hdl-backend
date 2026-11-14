@@ -21,6 +21,7 @@ const {
   requireRole,
 } = require('./middleware/authMiddleware');
 const { createAuthRouter } = require('./routes/authRoutes');
+const { mountOrquestraRouter } = require('./routes/orquestraRoutes');
 const { createAdminUsersRouter } = require('./routes/adminUsersRoutes');
 const { createHomeSummaryRouter } = require('./routes/homeSummaryRoutes');
 const { createAutomaticBackupRouter } = require('./routes/automaticBackupRoutes');
@@ -49,6 +50,7 @@ const pool = require('./db');
 
 const app = express();
 
+mountOrquestraRouter(app, pool);
 app.use(cors({
   origin: true,
   credentials: true,
