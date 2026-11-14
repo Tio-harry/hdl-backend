@@ -43,7 +43,7 @@ jobs:
       CI: true
       EMAIL_ENABLED: 'false'
       # Valores somente de teste, para o PostgreSQL descartável deste job.
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hdl_ci_source
+      HDL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hdl_ci_source
       PGPASSWORD: postgres
     steps:
       - uses: actions/checkout@v4
@@ -77,16 +77,8 @@ jobs:
           echo "PG_BIN=/usr/lib/postgresql/16/bin" >> "$GITHUB_ENV"
           /usr/lib/postgresql/16/bin/pg_dump --version
       - name: Banco de origem (estrutura de produção anterior à migration 003, sem dados)
-        run: '"$PG_BIN/psql" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f db/ci/base-schema-pre003.sql'
-      - name: Parser de contratos
-        env:
-          NODE_OPTIONS: --require ${{ github.workspace }}/.github/ci/bloquear-rede.cjs
-        run: bash .github/ci/rodar-e-anotar.sh npm run test:contract-parser
-      - name: Noite de Natal
-        env:
-          NODE_OPTIONS: --require ${{ github.workspace }}/.github/ci/bloquear-rede.cjs
-        run: bash .github/ci/rodar-e-anotar.sh node scripts/testNoiteNatal.js
-      - name: Integridade financeira (fase 1)
-        env:
-          NODE_OPTIONS: --require ${{ github.workspace }}/.github/ci/bloquear-rede.cjs
-        run: bash .github/ci/rodar-e-anotar.sh npm run test:financeiro-fase1
+        run: '"$PG_BIN/psql" "$HDL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q -f db/ci/base-schema-pre003.sql'
+      - name: Regressão sem banco
+        run: bash .github/ci/rodar-e-anotar.sh npm run test:ci
+      - name: Regressão com PostgreSQL descartável
+        run: bash .github/ci/rodar-e-anotar.sh npm run test:ci:postgres

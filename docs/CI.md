@@ -8,9 +8,15 @@ Workflow: `.github/workflows/ci.yml`. Roda em push e pull request para `main` (i
 1. `git diff --check` do que foi enviado (ignora `*.md`).
 2. `npm ci` e sintaxe (`node --check`) de `src/` e `scripts/`.
 3. Banco de teste carregado com `db/ci/base-schema-pre003.sql`.
-4. `npm run test:contract-parser`.
-5. `node scripts/testNoiteNatal.js`.
-6. `npm run test:financeiro-fase1`.
+4. npm run test:ci para suítes sem banco, incluindo o parser com fixtures e casos de IA simulada.
+5. npm run test:ci:postgres para testes de integração com PostgreSQL descartável, incluindo Natal, Financeiro e persistência de contato.
+
+## Como incluir uma regressão
+Adicione tests/**/*.test.js para testes sem banco ou tests/**/*.integration.js para testes com o PostgreSQL descartável. A Action descobre os arquivos automaticamente. Use dados sintéticos, simule provedores externos e preserve as fixtures úteis. A execução automatizada do parser retorna erro em caso de divergência e preserva seu relatório versionado.
+
+No PowerShell, na raiz do backend, rode npm.cmd test para a suíte sem banco. Para a integração, rode npm.cmd run test:ci:postgres com HDL_TEST_DATABASE_URL apontando para o banco descartável hdl_ci_source em loopback, carregado com db/ci/base-schema-pre003.sql, e PG_BIN apontando para os binários da mesma versão do servidor. Use uma instância exclusiva de testes. A suíte desativa dotenv, filtra o ambiente herdado e aplica o bloqueio de rede dos testes.
+
+O Codex segue o AGENTS.md e a skill hdl-bugfix-regression. A Action executa as suítes em Node 22 e registra falhas. A máquina local usa Node 24.
 
 ## Como ler uma falha
 - Falhas de teste e de build também aparecem como anotação **“Teste falhou”** no topo da página da execução, com o comando e as últimas linhas da saída (não precisa abrir o log).
@@ -20,7 +26,7 @@ Workflow: `.github/workflows/ci.yml`. Roda em push e pull request para `main` (i
 - `CI_REDE_BLOQUEADA`: o teste tentou acessar a internet (defeito do teste, não do CI).
 
 ## Fora do CI (continua local ou manual)
-Deploy, migrations em produção, validação visual (UAT), `testCustosNatal`, `testFuncoesEquipe` e `testContractNatal*` (este chama IA externa).
+Deploy, migrations em produção, validação visual (UAT), `testCustosNatal`, `testFuncoesEquipe` e o QA manual que chama IA externa.
 
 ## Banco base
 O job usa `ubuntu-24.04` e o cliente PostgreSQL 16 (mesma versão da produção e do banco do job): um `pg_dump` mais novo gera comandos que o banco 16 não entende (ex.: `transaction_timeout`).

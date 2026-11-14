@@ -35,5 +35,5 @@ inesperado, alteração fora do escopo, conflito ou trabalho anterior de outra t
 nem push forçado. Commit/push não autoriza deploy: deploy só se a tarefa autorizar (alto risco: siga a regra da tarefa).
 
 ## CI (GitHub Actions)
-Roda em todo push/PR para main (ignora só docs e `.claude`), com PostgreSQL descartável e rede externa bloqueada: `git diff --check`, `npm ci`, sintaxe, contract-parser, testNoiteNatal, financeiro fase 1. Detalhes e como ler falhas: `docs/CI.md`.
+A configuração, os filtros e os comandos de regressão sem banco e com PostgreSQL descartável estão em `docs/CI.md`.
 Não faz deploy nem usa secrets. Localmente rode só o teste focado; a regressão completa fica por conta do CI.

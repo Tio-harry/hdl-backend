@@ -1,0 +1,1 @@
+require('../scripts/testContractNatalAI.js');

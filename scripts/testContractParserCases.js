@@ -274,7 +274,7 @@ function printTerminalReport(results, fieldFailures) {
   }
 }
 
-function main() {
+function run({ report = true } = {}) {
   const caseNames = loadCases();
   const results = caseNames.map(runCase);
   const fieldFailures = {};
@@ -286,9 +286,12 @@ function main() {
   }
 
   printTerminalReport(results, fieldFailures);
+  if (results.some((result) => result.failedFields.length > 0)) process.exitCode = 1;
+  if (!report) return;
   const markdown = buildMarkdown(results, fieldFailures);
   fs.writeFileSync(REPORT_PATH, markdown, 'utf8');
   console.log(`\nRelatório Markdown gerado em: ${REPORT_PATH}`);
 }
 
-main();
+module.exports = { run };
+if (require.main === module) run();
