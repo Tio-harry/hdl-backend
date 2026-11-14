@@ -4,6 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const crypto = require('node:crypto');
 const { normalizeContractContact } = require('../src/services/contractContact');
+const { resolvePrincipal } = require('../src/services/natalService');
 const pool = require('../src/db');
 
 // Exercise the real route handlers against temporary copies, never real records.
@@ -20,7 +21,7 @@ async function main() {
     const context = {
       pool: { query, connect: async () => ({ query, release() {} }) },
       app: Object.fromEntries(['get', 'post', 'put'].map((method) => [method, (route, fn) => { routes[`${method} ${route}`] = fn; }])),
-      crypto, normalizeContractContact,
+      crypto, normalizeContractContact, resolvePrincipal,
     };
     const constants = source.slice(source.indexOf('const CONTRACT_INSERT_FIELDS'), source.indexOf('const ORCAMENTO_FIELDS'));
     const helpers = source.slice(source.indexOf('function getProvidedFields'), source.indexOf('function normalizeOrcamentoValue'));
