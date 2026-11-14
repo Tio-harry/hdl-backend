@@ -25,10 +25,22 @@ O Codex segue o AGENTS.md e a skill hdl-bugfix-regression. A Action executa as s
 - Teste: a última linha `PASS` mostra até onde chegou; a mensagem seguinte é o defeito.
 - `CI_REDE_BLOQUEADA`: o teste tentou acessar a internet (defeito do teste, não do CI).
 
-## Fora do CI (continua local ou manual)
-Deploy, migrations em produção, validação visual (UAT), `testCustosNatal`, `testFuncoesEquipe` e o QA manual que chama IA externa.
+## Fora do CI
+Migrations em produção, validação visual (UAT), `testCustosNatal`, `testFuncoesEquipe` e o QA manual que chama IA externa. O deploy pelo Codex segue a seção abaixo.
 
 ## Banco base
 O job usa `ubuntu-24.04` e o cliente PostgreSQL 16 (mesma versão da produção e do banco do job): um `pg_dump` mais novo gera comandos que o banco 16 não entende (ex.: `transaction_timeout`).
 
 `db/ci/base-schema-pre003.sql` é só estrutura (sem dados) do banco de produção antes da migration 003, extraída do backup de 30/10/2026. Os testes aplicam as migrations 001–003 por cima, como na produção. Se uma migration futura alterar o schema base, gere uma nova estrutura e atualize o arquivo.
+
+## Finalização e deploy pelo Codex
+
+Para mudanças de código da Gestão Operacional, o Codex conclui a implementação com teste focado, regressão relevante, build/checks, revisão do diff, commit, push e CI verde do SHA enviado. A autorização permanente do usuário cobre o deploy de baixo/médio risco após esses gates. O Codex usa `$hdl-release-deploy` para validar a base e a árvore de produção, confirmar recuperação conhecida, publicar e fazer o smoke test. O GitHub Actions executa a CI. O Codex conduz o deploy pelo runbook após a CI.
+
+Pare antes da produção se faltar um gate ou houver migration, mudança estrutural de banco, mudança de autenticação ou autorização, segredo novo, infraestrutura fora do runbook, provedor externo crítico, regra financeira central, ação destrutiva, perda ou transformação irreversível de dados, checkout sujo ou base inesperada na VPS, CI sem sucesso, rollback inseguro ou coordenação especial entre sistemas. Revise toda a diferença entre produção e o SHA alvo. Na VPS, faça apenas as verificações operacionais do runbook quando a regressão completa já passou na CI.
+
+Para desativar o deploy em uma tarefa, escreva “não fazer deploy”, “somente implementar”, “somente commit/push” ou “parar antes da produção” no pedido. “Somente implementar” também interrompe o fluxo antes de commit/push. Para commits só de documentação, a CI pode ser disparada manualmente na branch certa e conferida pelo SHA quando a tarefa pedir essa validação.
+
+### Runbook do backend
+
+No terminal SSH habitual, use `/var/www/hdl-app/hdl-backend`. Confira branch, árvore limpa, SHA em execução e estado de `hdl-backend.service`. Atualize por fast-forward para o SHA aprovado, rode `node --check src/index.js` e verifique também os arquivos JavaScript alterados. Reinicie com `sudo systemctl restart hdl-backend.service` e confira o estado com `systemctl is-active hdl-backend.service`. Valide a resposta de saúde na rota `GET /` do serviço e faça um smoke test seguro da API afetada. Confirme o SHA e o estado do serviço após a validação. O [registro do gerador de contratos](contratos-natal-gerador-qa.md#publicacao-futura-nao-executada) documenta o caminho, a checagem e o restart. O deploy automático exclui migrations.
